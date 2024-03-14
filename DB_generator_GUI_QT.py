@@ -47,7 +47,8 @@ class MainApp(QMainWindow):
         # Create menubar
         menuBar = self.menuBar()
         helpMenu = menuBar.addMenu('Help')
-
+        
+        # Create about button in the menubar
         aboutAction = helpMenu.addAction('About')
         aboutAction.triggered.connect(self.show_about)
 
@@ -244,7 +245,7 @@ class MainApp(QMainWindow):
                       'Antenna pattern Name', 'Centre frequency, MHz',
                       'Group ID', 'Noise Temp, K', 'Frequency minimum, MHz',
                       'Frequency maximum, MHz', 'Date brought into use', 'Date received',
-                      'IFIC no (wic_no)', 'Date updated']
+                      'IFIC no (wic_no)', 'Date updated', 'VLBI Support code']
 
             with open(filePath, 'w', newline='') as file:
                 csv_writer = csv.writer(file, delimiter=',')
@@ -293,7 +294,7 @@ class MainApp(QMainWindow):
                                     ant_names.append('NonTypical, submitted diameter is {} meters, see attachment {} to the relevant IFIC for details.'.format(
                                         local_ant_rows[subindex_beam][1], local_ant_rows[subindex_beam][0]))
 
-                        SQL = 'SELECT grp_id, noise_t, freq_min, freq_max, d_inuse, d_rcv, wic_no, d_upd FROM grp WHERE (ntc_id='+str(
+                        SQL = 'SELECT grp_id, noise_t, freq_min, freq_max, d_inuse, d_rcv, wic_no, d_upd, ra_stn_type FROM grp WHERE (ntc_id='+str(
                             ntc_id)+'and beam_name=\''+beam_names[subindex_beam]+'\''+');'
                         grp_rows = self.parse_database(SQL)
 
@@ -383,6 +384,7 @@ class MainApp(QMainWindow):
                 ant_gain = []
                 freq_min = []
                 freq_max = []
+                vlbi_type = []
 
                 for subindex_beam in range(0, beam_number):
                     beam_names.append(e_ant_rows[subindex_beam][0])
@@ -396,12 +398,13 @@ class MainApp(QMainWindow):
                     else:
                         ant_gain.append(e_ant_rows[subindex_beam][2])
 
-                    SQL = f"SELECT noise_t, freq_min, freq_max FROM grp WHERE (ntc_id={ntc_id} and beam_name='{beam_names[subindex_beam]}');"
+                    SQL = f"SELECT noise_t, freq_min, freq_max, ra_stn_type FROM grp WHERE (ntc_id={ntc_id} and beam_name='{beam_names[subindex_beam]}');"
                     grp_rows = self.parse_database(SQL)
 
                     noise_temp.append(grp_rows[0][0])
                     freq_min.append(grp_rows[0][1])
                     freq_max.append(grp_rows[0][2])
+                    vlbi_type.append(grp_rows[0][3])
 
                 station_freq_min = min(freq_min)
                 station_freq_max = max(freq_max)
@@ -452,7 +455,14 @@ class MainApp(QMainWindow):
                     doc.add_paragraph('Cryocooled: "N/A"')
                     doc.add_paragraph('Supports RAS mode continuum: "N/A"')
                     doc.add_paragraph('Supports RAS mode spectroscopy: "N/A"')
-                    doc.add_paragraph('Supports RAS mode VLBI: "N/A"')
+                    
+                    # 'S' stands for single dish and 'V' for VLBI
+                    if(vlbi_type[beam_index]=='V'):
+                        doc.add_paragraph('Supports RAS mode VLBI: "Yes"')
+                    elif(vlbi_type[beam_index]=='S'):
+                        doc.add_paragraph('Supports RAS mode VLBI: "No"')
+                    else:                        
+                        doc.add_paragraph('Supports RAS mode VLBI: "N/A"')
 
                 doc.add_page_break()
                 progressDialog.setValue(index+1)
@@ -1090,7 +1100,7 @@ class DatabaseEntryDetails(QMainWindow):
         self.beamInfoLayout = QGridLayout(self.beamInfoPanel)
         self.beamInfoTable = QTableWidget()
         headers = ['Beam name', 'Antenna Code', 'Antenna diameter, m', 'Antenna gain, dBi',
-                   'Noise temp, K', 'Frequency minimum, MHz', 'Frequency maximum, MHz', 'Centre frequency, MHz']
+                   'Noise temp, K', 'Frequency minimum, MHz', 'Frequency maximum, MHz', 'VLBI type', 'Centre frequency, MHz']
         self.beamInfoTable.setColumnCount(len(headers))
         self.beamInfoTable.setHorizontalHeaderLabels(headers)
         self.beamInfoTable.setSortingEnabled(True)
@@ -1161,7 +1171,7 @@ class DatabaseEntryDetails(QMainWindow):
         self.beamInfoTable.setRowCount(0)
         for beam_index, beam_row_data in enumerate(self.beam_rows):
             beam_name = beam_row_data[0]
-            SQL = f"SELECT noise_t, freq_min, freq_max FROM grp WHERE ntc_id={str(self.ntc_id)} AND beam_name='{beam_name}';"
+            SQL = f"SELECT noise_t, freq_min, freq_max, ra_stn_type FROM grp WHERE ntc_id={str(self.ntc_id)} AND beam_name='{beam_name}';"
             self.grp_rows = self.parent.parent.parse_database(SQL)
 
             SQL = f"SELECT freq_mhz FROM freq WHERE ntc_id={str(self.ntc_id)} AND beam_name='{beam_name}';"
@@ -1195,6 +1205,11 @@ class DatabaseEntryDetails(QMainWindow):
                         data = 'N/A'
                     if column_num == 1:
                         data = antenna_code
+                    if column_num == 7:
+                        if data == 'S':
+                            data = 'Single'
+                        elif data == 'V':
+                            data = 'VLBI'
                     item = QTableWidgetItem(str(data))
                     item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                     self.beamInfoTable.setItem(
