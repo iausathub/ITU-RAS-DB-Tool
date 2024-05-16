@@ -10,6 +10,7 @@ This is a next version of DB generator GUI with QT interface. Since it is suppos
 
 import sys
 import pyodbc
+import sqlite3
 import os
 import csv
 import docx
@@ -114,6 +115,13 @@ class MainApp(QMainWindow):
         self.button_export_word.setEnabled(False)
         self.button_export_word.setToolTip('Connect a database first.')
         gridLayoutExport.addWidget(self.button_export_word, 0, 1)
+        
+        self.button_export_SQLite = QPushButton(
+            'Export all data as SQLite DB', self)
+        self.button_export_SQLite.clicked.connect(self.save_DB)
+        self.button_export_SQLite.setEnabled(False)
+        self.button_export_SQLite.setToolTip('Connect a database first.')
+        gridLayoutExport.addWidget(self.button_export_SQLite, 0, 2)
 
         self.exportToolsGroup.setLayout(gridLayoutExport)
 
@@ -161,7 +169,10 @@ class MainApp(QMainWindow):
             self.button_export_csv.setToolTip('Select a database first.')
 
             self.button_export_word.setEnabled(False)
-            self.button_export_word.setToolTip('Select a database first.')
+            self.button_export_word.setToolTip('Select a database first.')            
+            
+            self.button_export_SQLite.setEnabled(False)
+            self.button_export_SQLite.setToolTip('Select a database first.')
 
     def database_connect(self):
         # Attempt to connect to the selected database
@@ -190,6 +201,9 @@ class MainApp(QMainWindow):
 
             self.button_export_word.setEnabled(True)
             self.button_export_word.setToolTip(None)
+            
+            self.button_export_SQLite.setEnabled(True)
+            self.button_export_SQLite.setToolTip(None)
         except Exception as e:
             QMessageBox.critical(self, "Database Connection Error",
                                  f"An error occurred while connecting to the database:\n{e}")
@@ -336,14 +350,8 @@ class MainApp(QMainWindow):
             progressDialog.setWindowModality(Qt.WindowModal)
             progressDialog.setCancelButton(None)
             progressDialog.show()
-
-            # Establish a link between ITU country codes and country names
-            # https://www.itu.int/en/ITU-R/terrestrial/fmd/Pages/geo_area_list.aspx
-            country_codes_to_names = {}
-            with open('geographical-areas.csv', newline='') as csvfile:
-                reader = csv.reader(csvfile)
-                for row in reader:
-                    country_codes_to_names[row[0]] = row[1]
+                   
+            country_codes_to_names=self.load_country_codes()
 
             for index, row in enumerate(com_el_rows):
                 progressDialog.setLabelText(
@@ -384,7 +392,7 @@ class MainApp(QMainWindow):
                 ant_gain = []
                 freq_min = []
                 freq_max = []
-                vlbi_type = []
+                vlbi_type = []                
 
                 for subindex_beam in range(0, beam_number):
                     beam_names.append(e_ant_rows[subindex_beam][0])
@@ -400,11 +408,12 @@ class MainApp(QMainWindow):
 
                     SQL = f"SELECT noise_t, freq_min, freq_max, ra_stn_type FROM grp WHERE (ntc_id={ntc_id} and beam_name='{beam_names[subindex_beam]}');"
                     grp_rows = self.parse_database(SQL)
-
-                    noise_temp.append(grp_rows[0][0])
-                    freq_min.append(grp_rows[0][1])
-                    freq_max.append(grp_rows[0][2])
-                    vlbi_type.append(grp_rows[0][3])
+                    
+                    for group_index, group in enumerate(grp_rows):
+                        noise_temp.append(grp_rows[group_index][0])
+                        freq_min.append(grp_rows[group_index][1])
+                        freq_max.append(grp_rows[group_index][2])
+                        vlbi_type.append(grp_rows[group_index][3])
 
                 station_freq_min = min(freq_min)
                 station_freq_max = max(freq_max)
@@ -466,13 +475,205 @@ class MainApp(QMainWindow):
 
                 doc.add_page_break()
                 progressDialog.setValue(index+1)
+                
 
             try:
                 doc.save(filePath)
             except Exception as e:
                 QMessageBox.critical(self, "Docx saving Error",
                                      f"An error occurred while preparing the docx file:\n{e}")
+            progressDialog.close()
+    def save_DB(self):
+        def create_database(filePath):
+            if os.path.exists(filePath):
+                os.remove(filePath)
+            conn = sqlite3.connect(filePath, timeout=90)
+            cursor = conn.cursor()
+            # SQL commands to create tables
+            create_table_stations = """
+            CREATE TABLE "Stations" (
+                "CPS Station ID"	INTEGER NOT NULL UNIQUE,
+                "Country"	TEXT,
+                "Short Name"	TEXT NOT NULL,
+                "Long Name"	TEXT,
+                "Type"	TEXT CHECK("Type" IN ('single dish', 'array', 'mixed', 'unknown')),
+                "Station longitude [deg]"	NUMERIC,
+                "Station latitude [deg]"	NUMERIC,
+                "Station altitude (amsl) [m]"	NUMERIC,
+                "Operational"	INTEGER,
+                "Used for science"	INTEGER,
+                "Min station frequency [MHz]"	NUMERIC,
+                "Max station frequency [MHz]"	NUMERIC,
+                "Contact / Website"	TEXT,
+                "Contact / Address"	TEXT,
+                "Contact / Phone"	TEXT,
+                "Contact / Email"	TEXT,
+                "Registered at ITU"	INTEGER,
+                "ITU Notice ID"	INTEGER,
+                "ITU responsible Administration"	TEXT,
+                PRIMARY KEY("CPS Station ID" AUTOINCREMENT)
+            );
+            """
+            cursor.execute(create_table_stations)
+            create_table_antennas = """
+            CREATE TABLE "Antennas" (
+            	"CPS Station ID"	INTEGER,
+            	"CPS Antenna ID"	INTEGER NOT NULL UNIQUE,
+            	"Antenna longitude [deg]"	NUMERIC,
+            	"Antenna latitude [deg]"	NUMERIC,
+            	"Antenna altitude (WGS84) [m]"	NUMERIC,
+            	"Antenna altitude (amsl) [m]"	NUMERIC,
+            	"Feed/Rx height above ground [m]"	NUMERIC,
+            	"Antenna diameter [m]"	NUMERIC,
+            	"Minimum elevation [deg]"	NUMERIC,
+            	"Minimum frequency [MHz]"	NUMERIC,
+            	"Maximum frequency [MHz]"	NUMERIC,
+            	FOREIGN KEY("CPS Station ID") REFERENCES "Stations"("CPS Station ID"),
+            	PRIMARY KEY("CPS Antenna ID" AUTOINCREMENT)
+            );
+            """
+            cursor.execute(create_table_antennas)
+            create_table_frequency_bands = """
+            CREATE TABLE "Frequency_Bands" (
+            	"CPS Station ID"	INTEGER,
+            	"CPS Antenna ID"	INTEGER,
+            	"CPS Band ID"	INTEGER NOT NULL UNIQUE,
+            	"Band start [MHz]"	NUMERIC,
+            	"Band stop [MHz]"	NUMERIC,
+            	"Antenna eff. Area [m^2]"	NUMERIC,
+            	"Cryo-cooled"	INTEGER,
+            	"Polarisation"	TEXT,
+            	"Supports RAS mode continuum"	INTEGER,
+            	"Supports RAS mode spectroscopy"	INTEGER,
+            	"Supports RAS mode VLBI"	INTEGER,
+            	"Noise temperature [K]"	NUMERIC,
+            	FOREIGN KEY("CPS Station ID") REFERENCES "Stations"("CPS Station ID"),
+            	FOREIGN KEY("CPS Antenna ID") REFERENCES "Antennas",
+            	PRIMARY KEY("CPS Band ID" AUTOINCREMENT)
+            );
+            """
+            cursor.execute(create_table_frequency_bands)
+            return conn, cursor
+        
+        def process_stations(cursor_ITU, cursor_CPS, country_codes_to_names):
+            """
+            Processes each station from the ITU database and inserts it into the CPS database.
+            """
+            cursor_ITU.execute('SELECT ntc_id, adm, ctry, stn_name, long_dec, lat_dec FROM com_el WHERE ntc_type=\'R\' ORDER BY adm asc, stn_name asc;')
+            com_el_rows = cursor_ITU.fetchall()
+            station_number=len(com_el_rows)
+            progressDialog = QProgressDialog(
+                "Operation in progress...", "Cancel", 0, station_number, self)
+            progressDialog.setWindowTitle("Saving...")
+            progressDialog.setWindowModality(Qt.WindowModal)
+            progressDialog.setCancelButton(None)
+            progressDialog.show()           
+            
 
+            for index, row in enumerate(com_el_rows):
+                country_name = country_codes_to_names.get(row[2], 'Unknown')
+                progressDialog.setLabelText(
+                    f"Now populating station {index+1} of {station_number}")
+                cursor_CPS.execute('''
+                    INSERT INTO stations ("ITU Notice ID", "ITU responsible Administration", "Country", "Short name",
+                                          "Station longitude [deg]", "Station latitude [deg]", "Registered at ITU")
+                    VALUES (?, ?, ?, ?, ?, ?, 1);
+                ''', (row[0], row[1], country_name, row[3], row[4], row[5]))
+                cps_station_id = cursor_CPS.lastrowid
+                process_antennas(cursor_ITU, cursor_CPS, row[0], cps_station_id, row[4], row[5])
+                progressDialog.setValue(index+1)
+                
+            progressDialog.close()
+            
+        def process_antennas(cursor_ITU, cursor_CPS, ntc_id, cps_station_id, long_dec, lat_dec):
+            """
+            Retrieves antenna data related to the station and processes frequency bands for each antenna.
+            """
+            cursor_ITU.execute(f"SELECT beam_name, ant_diam FROM e_ant WHERE ntc_id={ntc_id};")
+            e_ant_rows = cursor_ITU.fetchall()
+
+            cursor_ITU.execute(f"SELECT elev_min FROM e_stn WHERE ntc_id={ntc_id};")
+            elev_min_result = cursor_ITU.fetchone()
+            elev_min = elev_min_result[0] if elev_min_result else None
+
+            frequency_ranges = []
+
+            for beam_name, ant_diam in e_ant_rows:
+                cursor_CPS.execute('''
+                    INSERT INTO antennas ("CPS Station ID", "Antenna diameter [m]", "Minimum elevation [deg]", "Antenna longitude [deg]", "Antenna latitude [deg]")
+                    VALUES (?, ?, ?, ?, ?);
+                ''', (cps_station_id, ant_diam, elev_min, long_dec, lat_dec))
+                cps_antenna_id = cursor_CPS.lastrowid
+                freqs = process_frequency_bands(cursor_ITU, cursor_CPS, ntc_id, beam_name, cps_antenna_id, cps_station_id)
+                frequency_ranges.extend(freqs)        
+                min_freq = min(freqs)
+                max_freq = max(freqs)
+                cursor_CPS.execute('''
+                    UPDATE antennas SET "Minimum frequency [MHz]" = ?, "Maximum frequency [MHz]" = ?
+                    WHERE "CPS Antenna ID" = ?;
+                ''', (min_freq, max_freq, cps_antenna_id))
+
+            
+            min_freq = min(frequency_ranges)
+            max_freq = max(frequency_ranges)
+            cursor_CPS.execute('UPDATE stations SET "Min station frequency [MHz]" = ?, "Max station frequency [MHz]" = ? WHERE "CPS Station ID" = ?;', (min_freq, max_freq, cps_station_id))
+                
+
+        def process_frequency_bands(cursor_ITU, cursor_CPS, ntc_id, beam_name, cps_antenna_id, cps_station_id):
+            """
+            Processes frequency bands for each antenna and inserts them into the CPS database.
+            """
+            cursor_ITU.execute(f"SELECT freq_min, freq_max, ra_stn_type, noise_t FROM grp WHERE ntc_id={ntc_id} AND beam_name='{beam_name}';")
+            grp_rows = cursor_ITU.fetchall()
+
+            frequency_ranges = []
+
+            for freq_min, freq_max, ra_stn_type, noise_t in grp_rows:
+                vlbi_key = 1 if ra_stn_type == 'V' else 0
+                cursor_CPS.execute('''
+                    INSERT INTO Frequency_Bands ("CPS Station ID", "CPS Antenna ID", "Band start [MHz]", "Band stop [MHz]", "Supports RAS mode VLBI", "Noise temperature [K]")
+                    VALUES (?, ?, ?, ?, ?, ?);
+                ''', (cps_station_id, cps_antenna_id, freq_min, freq_max, vlbi_key, noise_t))
+                frequency_ranges.append(freq_min)
+                frequency_ranges.append(freq_max)
+
+            return frequency_ranges
+
+                
+        filePath, _ = QFileDialog.getSaveFileName(
+            self, "Save as SQLite", f"CPS_RAS_DB_FULL_SQLite_{self.database_version}_{self.database_date.date()}", 
+            "SQLite Database Files (*.db)")
+        if filePath:
+            if not filePath.endswith('.db'):
+                filePath += '.db'
+            try:
+                conn, cursor = create_database(filePath)
+                country_codes_to_names=self.load_country_codes()
+                
+                process_stations(self.dbConnection.cursor(), cursor, country_codes_to_names)
+                
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                QMessageBox.critical(self, "DB saving Error",
+                                     f"An error occurred while preparing the db file:\n{e}")  
+            
+    
+    def load_country_codes(self, filepath=None):
+        """
+        Loads country codes and their corresponding names from a CSV file to
+        establish a link between ITU country codes and country names
+        https://www.itu.int/en/ITU-R/terrestrial/fmd/Pages/geo_area_list.aspx 
+        """
+        country_codes_to_names = {}
+        if filepath is None:
+            filepath = 'geographical-areas.csv'
+        with open(filepath, newline='') as csvfile:
+            reader = csv.reader(csvfile)
+            for row in reader:
+                country_codes_to_names[row[0]] = row[1]
+        return country_codes_to_names
+    
     def updateStatusLight(self, widget, status, status_text):
         # Update the status light color based on whether connection was successfully established
         if status:
@@ -631,8 +832,8 @@ class AboutDialog(QDialog):
         layout.addWidget(imageLabel, 0, 0, 2, 1)
 
         textLabel1 = QLabel("This tool helps with importing ITU database for IAU CPS RAS database.\n\n"
-                            "Program version: v0.1a\n\n"
-                            "Initial version of this program parses the ITU database entries.\n\n", self)
+                            "Program version: v0.1b\n\n"
+                            "Second version of this program parses the ITU database entries and is capable to export it to CPS database.\n\n", self)
         textLabel1.setWordWrap(True)
         layout.addWidget(textLabel1, 0, 1)
 
@@ -677,7 +878,7 @@ class InteractiveDatabase(QMainWindow):
         self.tableWidget = QTableWidget()
         headers = ["ITU Notice ID", "ITU Administration code", "ITU Country code        ", "Station Name",
                    "Provision", "Date received", "Longitude", "Latitude"]
-        self.load_country_codes()
+        self.country_codes=self.parent.load_country_codes()
         self.tableWidget.setColumnCount(len(headers))
         self.tableWidget.setHorizontalHeaderLabels(headers)
         self.tableWidget.setSortingEnabled(True)
@@ -744,13 +945,6 @@ class InteractiveDatabase(QMainWindow):
                 self.tableWidget.setItem(row_num, column_num, item)
 
         self.tableWidget.resizeColumnsToContents()
-
-    def load_country_codes(self):
-        self.country_codes = {}
-        with open('geographical-areas.csv', mode='r', encoding='utf-8') as csvfile:
-            reader = csv.reader(csvfile)
-            for row in reader:
-                self.country_codes[row[0]] = row[1]
 
     def updateTableDisplay(self):
         displayNames = self.displayNamesCheckbox.isChecked()
