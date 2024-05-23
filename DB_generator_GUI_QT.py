@@ -9,6 +9,7 @@ Version History:
 v0.1a - Initial release
 v0.1b - Fixed the bug in saving whole DB as a word function (incorrect evaluation of station frequency boundaries) and added VLBI Key. Also added an option to save the DB as SQLite DB.
 v0.2a - Added a Wikidata query to the SQLite DB and Site Link Wizard to Link Wikidata stations with ITU ones
+v0.2b - Fixed bugs with incorrect js build in Link Wizard
 
 IDE used: VSCode with enviroment set and controlled by Anaconda
 """
@@ -33,8 +34,12 @@ from PyQt5.QtGui import QIcon, QPixmap, QDesktopServices
 from PyQt5.QtCore import Qt, QParallelAnimationGroup, QPropertyAnimation, QRect, QEventLoop, QEasingCurve, QUrl
 
 class MainApp(QMainWindow):
-    # This is the main window with database selector, interactive database, and saving capability
+    """
+    This is the main window with database selector, interactive database, and saving capability. 
+    It serves as the entry point to all other classes below.
+    """
     def __init__(self):
+        """Initialize the main application window."""
         super().__init__()
         self.dbConnection = None
         self.interactive_database = None
@@ -43,6 +48,7 @@ class MainApp(QMainWindow):
         self.initUI()
 
     def initUI(self):
+        """Set up the user interface for the main application window."""
         # Set the window properties
         self.setWindowTitle('IAU CPS RAS Database Tool')
         self.setWindowIcon(QIcon('cps-logo-mono.ico'))
@@ -162,7 +168,7 @@ class MainApp(QMainWindow):
         # Selecting database callback
         options = QFileDialog.Options()
         self.database_file_name, _ = QFileDialog.getOpenFileName(
-            self, "QFileDialog.getOpenFileName()", "", "MDB Files (*.mdb)", options=options)
+            self, "Select ITU Database File", "", "MDB Files (*.mdb)", options=options)
         if self.database_file_name:
             self.statusBar().showMessage(
                 f'    Database file selected: {self.database_file_name}')
@@ -735,7 +741,7 @@ class MainApp(QMainWindow):
             
     def run_site_link_wizard(self):
         options = QFileDialog.Options()
-        filePath, _ = QFileDialog.getOpenFileName(self, "Select Database File", "", "SQLite Files (*.db);;All Files (*)", options=options)
+        filePath, _ = QFileDialog.getOpenFileName(self, "Select CPS Database File", "", "SQLite Files (*.db);;All Files (*)", options=options)
         if filePath:
             self.animateClosing(self)
             self.showMinimized()
@@ -1857,8 +1863,12 @@ class SiteLinkWizard(QMainWindow):
         self.wikidataLayout.addWidget(QLabel(f"Name: {entry[1]}"), 0, 0)
         self.wikidataLayout.addWidget(QLabel(f"Country: {entry[2]}"), 1, 0)
         self.wikidataLayout.addWidget(QLabel(f"Coordinates:"), 2, 0)
-        self.wikidataLayout.addWidget(QLabel(f"    Longitude: {entry[3]}"), 3, 0)
-        self.wikidataLayout.addWidget(QLabel(f"    Latitude: {entry[4]}"), 4, 0)
+        try:
+            self.wikidataLayout.addWidget(QLabel(f"    Longitude: {entry[3]:.3f}"), 3, 0)
+            self.wikidataLayout.addWidget(QLabel(f"    Latitude: {entry[4]:.3f}"), 4, 0)
+        except:
+            self.wikidataLayout.addWidget(QLabel(f"    Longitude: N/A"), 3, 0)
+            self.wikidataLayout.addWidget(QLabel(f"    Latitude: N/A"), 4, 0)
 
         source_label = QLabel(f'<a href="{entry[5]}">Source</a>')
         source_label.setOpenExternalLinks(True)
@@ -1876,26 +1886,43 @@ class SiteLinkWizard(QMainWindow):
             station_name = selected_item.split(' (')[0]
             matched_station = next((s for s in self.stations_entries if s[2] == station_name), None)
             if matched_station:
+                self.stationDetailsLayout.setSpacing(2)
+                self.stationDetailsLayout.setContentsMargins(0, 0, 0, 0)
+
                 self.stationDetailsLayout.addWidget(QLabel(f"Name: {matched_station[2]}\n"), 0, 0)
                 self.stationDetailsLayout.addWidget(QLabel(f"Country: {matched_station[1]}\n"), 1, 0)
-                self.stationDetailsLayout.addWidget(QLabel(f"Coordinates: {matched_station[5]}, {matched_station[6]}\n"), 2, 0)
+                self.stationDetailsLayout.addWidget(QLabel(f"Coordinates: {matched_station[5]:.3f}, {matched_station[6]:.3f}\n"), 2, 0)
                 self.stationDetailsLayout.addWidget(QLabel(f"Frequency range: {matched_station[10]} MHz - {matched_station[11]} MHz\n"), 3, 0)
                 self.stationDetailsLayout.addWidget(QLabel(f"ITU Notice ID: {matched_station[17]}\n"), 4, 0)
-                self.stationDetailsLayout.addWidget(QLabel(f"ITU responsible Administration: {matched_station[18]}\n"), 5, 0)
 
                 # Add a vertical spacer to push the content to the top
-                self.stationDetailsLayout.addItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding), 6, 0)        
+                self.stationDetailsLayout.addItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding), 5, 0)        
 
     def show_itu_details(self):
-        selected_items = self.stationsList.selectedItems()
-        if selected_items:
-            station_name = selected_items[0].text().split(' (')[0]
-            matched_station = next((s for s in self.stations_entries if s[2] == station_name), None)
-            if matched_station:
-                self.parent.animateClosing(self) # type: ignore
-                self.showMinimized()
-                self.setEnabled(False)
-                self.details_window = DatabaseEntryDetails(ntc_id=str(matched_station[17]), station_name=matched_station[2], parent=self)
+        if self.parent.dbConnection is None: # type: ignore
+            QMessageBox.warning(self, "Warning", "ITU database was not connected, please select one corresponding to the creation of this CPS database.")
+            self.parent.database_select() # type: ignore
+            if self.parent.database_file_name: # type: ignore
+                self.parent.database_connect() # type: ignore
+            else:
+                QMessageBox.warning(self, "Warning", "ITU database selection cancelled")
+
+        if self.parent.dbConnection: # type: ignore
+            selected_items = self.stationsList.selectedItems()
+            if selected_items:
+                station_name = selected_items[0].text().split(' (')[0]
+                matched_station = next((s for s in self.stations_entries if s[2] == station_name), None)
+                if matched_station:
+                    self.parent.animateClosing(self) # type: ignore
+                    self.showMinimized()
+                    self.setEnabled(False)
+                    self.details_window = DatabaseEntryDetails(ntc_id=str(matched_station[17]), station_name=matched_station[2], parent=self)
+        else:                    
+            QMessageBox.critical(self, "Database Connection Error",
+                                    "An error occurred while connecting to the database, no details will be shown")
+
+
+        
 
     def find_closest_stations(self, entry):
         latitude = entry[4]
@@ -1976,92 +2003,105 @@ class SiteLinkWizard(QMainWindow):
         wikidata_country = wikidata_station[2]
         wikidata_lat = wikidata_station[3]
         wikidata_lon = wikidata_station[4]
-
-        try:
-            html_parts = []
-            html_parts.append("""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Full Widget Leaflet Map for Radio Astronomy Stations Database Tool</title>
-                <meta charset="utf-8" />
-                <link 
-                    rel="stylesheet" 
-                    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-                />
-                <script 
-                    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
-                </script>
-                <style>
-                    body {
-                        padding: 0;
-                        margin: 0;
-                    }
-                    html, body, #map {
-                        height: 100%;
-                        width: 100%;
-                    }
-                </style>
-            </head>
-            <body>
-                <div id="map"></div>
-            
-                <script>
-                """)
-            html_parts.append(f"""
-                    var map = L.map('map', {{attributionControl: false}}).setView([{wikidata_lat}, {wikidata_lon}], 16);
-                    """)
-            html_parts.append("""
-                    var myAttrControl = L.control.attribution().addTo(map);
-                    myAttrControl.setPrefix('<a href="https://leafletjs.com/">Leaflet</a>');
-                    
-                    mapLink = 
-                        '<a href="http://openstreetmap.org">OpenStreetMap</a>';
-                    L.tileLayer(
-                        'http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                        attribution: 'Map data by &copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>, under <a href="https://opendatacommons.org/licenses/odbl/">ODbL.</a>',
-                        maxZoom: 18,
-                        }).addTo(map);
-                        
-                    var redIcon = new L.Icon({
-                        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
-                        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.3.1/images/marker-shadow.png',
-                        iconSize: [25, 41],
-                        iconAnchor: [12, 41],
-                        popupAnchor: [1, -34],
-                        shadowSize: [41, 41]
-                    });
-            """)
-
-            for name, adm, ctr, lat, lon in station_data[1:]:
-                adm_escaped = adm.replace("'", "&#39;").replace('"', '&quot;')
-                ctr_escaped = ctr.replace("'", "&#39;").replace('"', '&quot;')
-                html_parts.append(
-                    f"        L.marker([{lat}, {lon}]).addTo(map).bindPopup('<b>ITU Station: {name}</b><br>Region country code:<b>{ctr_escaped}</b><br>Responsible administration: <b>{adm_escaped}</b>');")
-
-            html_parts.append(
-                f"        L.marker([{wikidata_lat}, {wikidata_lon}], {{icon: redIcon}}).addTo(map).bindPopup('<b>Wikidata station: {wikidata_name}</b><br>Country:<b>{wikidata_country}</b>').openPopup();")
-
-            html_parts.append("""
-                </script>
-            </body>
-            </html>
-            """)
-
-            html = ''.join(html_parts)
-
-        except Exception as e:
+        if wikidata_lon is None or wikidata_lat is None:            
             html = f"""
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Error</title>
+            <title>No coordinates</title>
         </head>
         <body>
-            <p>Error generating map: {str(e)}</p>
+            <p>No coordinates for wikidata station to show the map</p>
         </body>
         </html>
         """
+        else:
+            try:
+                html_parts = []
+                html_parts.append("""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Full Widget Leaflet Map for Radio Astronomy Stations Database Tool</title>
+                    <meta charset="utf-8" />
+                    <link 
+                        rel="stylesheet" 
+                        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+                    />
+                    <script 
+                        src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+                    </script>
+                    <style>
+                        body {
+                            padding: 0;
+                            margin: 0;
+                        }
+                        html, body, #map {
+                            height: 100%;
+                            width: 100%;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div id="map"></div>
+                
+                    <script>
+                    """)
+                html_parts.append(f"""
+                        var map = L.map('map', {{attributionControl: false}}).setView([{wikidata_lat}, {wikidata_lon}], 16);
+                        """)
+                html_parts.append("""
+                        var myAttrControl = L.control.attribution().addTo(map);
+                        myAttrControl.setPrefix('<a href="https://leafletjs.com/">Leaflet</a>');
+                        
+                        mapLink = 
+                            '<a href="http://openstreetmap.org">OpenStreetMap</a>';
+                        L.tileLayer(
+                            'http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                            attribution: 'Map data by &copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>, under <a href="https://opendatacommons.org/licenses/odbl/">ODbL.</a>',
+                            maxZoom: 18,
+                            }).addTo(map);
+                            
+                        var redIcon = new L.Icon({
+                            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
+                            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.3.1/images/marker-shadow.png',
+                            iconSize: [25, 41],
+                            iconAnchor: [12, 41],
+                            popupAnchor: [1, -34],
+                            shadowSize: [41, 41]
+                        });
+                """)
+
+                for name, adm, ctr, lat, lon in station_data[1:]:
+                    adm_escaped = adm.replace("'", "&#39;").replace('"', '&quot;')
+                    ctr_escaped = ctr.replace("'", "&#39;").replace('"', '&quot;')
+                    name_escaped = name.replace("'", "&#39;").replace('"', '&quot;')
+                    html_parts.append(
+                        f"        L.marker([{lat}, {lon}]).addTo(map).bindPopup('<b>ITU Station: {name_escaped}</b><br>Region country code:<b>{ctr_escaped}</b><br>Responsible administration: <b>{adm_escaped}</b>');")
+
+                html_parts.append(
+                    f"        L.marker([{wikidata_lat}, {wikidata_lon}], {{icon: redIcon}}).addTo(map).bindPopup('<b>Wikidata station: {wikidata_name.replace("'", "&#39;").replace('"', '&quot;')}</b><br>Country:<b>{wikidata_country.replace("'", "&#39;").replace('"', '&quot;')}</b>').openPopup();")
+
+                html_parts.append("""
+                    </script>
+                </body>
+                </html>
+                """)
+
+                html = ''.join(html_parts)
+
+            except Exception as e:
+                html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Error</title>
+            </head>
+            <body>
+                <p>Error generating map: {str(e)}</p>
+            </body>
+            </html>
+            """
         return html
     def showEvent(self, event):
         super().showEvent(event)
