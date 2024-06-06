@@ -17,6 +17,7 @@ import sys
 import pyodbc
 import sqlite3
 import os
+import base64
 import csv
 import docx
 from docx.enum.section import WD_ORIENT
@@ -27,11 +28,12 @@ from PyQt5.QtWebEngineWidgets import QWebEngineView
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QDesktopWidget, QWidget, QPushButton, QFileDialog, QLabel,
                              QMessageBox, QGridLayout, QGroupBox, QDialog, QTableWidget, QTableWidgetItem, QCheckBox,
-                             QHBoxLayout, QProgressDialog, QProgressBar, QListWidget, QSpacerItem, QSizePolicy, QListWidgetItem)
+                             QHBoxLayout, QProgressDialog, QProgressBar, QListWidget, QSpacerItem, QSizePolicy, 
+                             QListWidgetItem, QStackedLayout)
 
-from PyQt5.QtGui import QIcon, QPixmap, QDesktopServices
+from PyQt5.QtGui import QIcon, QPixmap, QDesktopServices, QPainter, QColor
 
-from PyQt5.QtCore import Qt, QParallelAnimationGroup, QPropertyAnimation, QRect, QEventLoop, QEasingCurve, QUrl
+from PyQt5.QtCore import Qt, QParallelAnimationGroup, QPropertyAnimation, QRect, QEventLoop, QEasingCurve, QUrl, QTimer, QRectF
 
 class MainApp(QMainWindow):
     """
@@ -1187,6 +1189,53 @@ class InteractiveDatabase(QMainWindow):
             self.parent.activateWindow()
             self.parent.setEnabled(True)
 
+class LoadingWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+        layout = QGridLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+
+        self.label = QLabel("Map is being processed, please wait")
+        self.label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.label, 0, 0, Qt.AlignCenter)
+
+        self.spinner = SpinnerWidget()
+        layout.addWidget(self.spinner, 1, 0, Qt.AlignCenter)
+
+        self.setLayout(layout)
+
+
+class SpinnerWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setFixedSize(60, 60)
+        self.angle = 0
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.rotate)
+        self.timer.start(100)
+
+    def rotate(self):
+        self.angle = (self.angle + 30) % 360
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+
+        rect = self.rect()
+        radius = min(rect.width(), rect.height()) // 2
+
+        for i in range(12):
+            color = QColor(0, 0, 0)
+            color.setAlphaF(1.0 - i / 12.0)
+            painter.setBrush(color)
+
+            painter.save()
+            painter.translate(rect.center())
+            painter.rotate(self.angle - i * 30.0)
+            painter.drawEllipse(QRectF(-radius // 4, -radius, radius // 2, radius // 2))
+            painter.restore()
 
 class MapWindow(QMainWindow):
     def __init__(self, station_data=None, parent=None):
@@ -1210,12 +1259,17 @@ class MapWindow(QMainWindow):
         centralWidget.setLayout(layout)
 
         self.mapPanel = QGroupBox("Map Panel")
-        mapLayout = QGridLayout()
-        self.mapPanel.setLayout(mapLayout)
+        self.mapLayout = QStackedLayout()
+        self.mapPanel.setLayout(self.mapLayout)
 
         self.browser = QWebEngineView()
+        self.loading_widget = LoadingWidget()
 
-        mapLayout.addWidget(self.browser, 0, 0)
+        self.mapLayout.addWidget(self.browser)
+        self.mapLayout.addWidget(self.loading_widget)
+        self.mapLayout.setCurrentWidget(self.loading_widget)
+
+        self.browser.loadFinished.connect(self.onLoadFinished)
 
         self.interactionPanel = QGroupBox("Interaction Panel")
         interactionLayout = QGridLayout()
@@ -1243,10 +1297,22 @@ class MapWindow(QMainWindow):
         if self.station_data is not None:
             self.browser.setHtml(self.generateMapHTML(self.station_data))
 
+    def onLoadFinished(self, ok):
+        if ok:
+            self.mapLayout.setCurrentWidget(self.browser)
+
+    def generate_base64_icon(self, icon_path):
+        with open(icon_path, "rb") as image_file:
+            return base64.b64encode(image_file.read()).decode('utf-8')
+        
     def generateMapHTML(self, station_data):
         try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            icon_path = os.path.join(script_dir, 'ras_s_icon.webp').replace('\\', '/')
+            icon_base64 = self.generate_base64_icon(icon_path)
+
             html_parts = []
-            html_parts.append("""
+            html_parts.append(f"""
             <!DOCTYPE html>
             <html>
             <head>
@@ -1256,44 +1322,110 @@ class MapWindow(QMainWindow):
                     rel="stylesheet" 
                     href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
                 />
+                <link
+                    rel="stylesheet"
+                    href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css"
+                />
+                <link
+                    rel="stylesheet"
+                    href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css"
+                />
                 <script 
                     src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
                 </script>
+                <script
+                    src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js">
+                </script>
                 <style>
-                    body {
+                    body {{
                         padding: 0;
                         margin: 0;
-                    }
-                    html, body, #map {
+                    }}
+                    html, body, #map {{
                         height: 100%;
                         width: 100%;
-                    }
+                    }}
+                    .custom-cluster-icon {{
+                        background: radial-gradient(circle, white 25%, transparent 75%);
+                        border-radius: 50%;
+                        border: 2px solid rgba(0, 0, 0, 0.5);
+                        text-align: center;
+                        color: black;
+                        font-size: 14px;
+                        font-weight: bold;
+                        width: 40px;
+                        height: 40px;
+                    }}
+                    .custom-cluster-icon img {{
+                        position: absolute;
+                        top: 50%;
+                        left: 50%;
+                        transform: translate(-50%, -50%);
+                        width: 30px;
+                        height: 30px;
+                    }}
+                    .custom-cluster-icon .cluster-count {{
+                        position: absolute;
+                        top: -10px;
+                        right: -10px;
+                        background: red;
+                        color: white;
+                        border-radius: 50%;
+                        width: 20px;
+                        height: 20px;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        font-size: 12px;
+                    }}
                 </style>
             </head>
             <body>
                 <div id="map"></div>
             
                 <script>
-                    var map = L.map('map', {attributionControl: false}).setView([0, 0], 2);
+                    var map = L.map('map', {{attributionControl: false}}).setView([0, 0], 2);
                     var myAttrControl = L.control.attribution().addTo(map);
                     myAttrControl.setPrefix('<a href="https://leafletjs.com/">Leaflet</a>');
                     
                     mapLink = 
                         '<a href="http://openstreetmap.org">OpenStreetMap</a>';
                     L.tileLayer(
-                        'http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        'http://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
                         attribution: 'Map data by &copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>, under <a href="https://opendatacommons.org/licenses/odbl/">ODbL.</a>',
                         maxZoom: 18,
-                        }).addTo(map);
+                        }}).addTo(map);
+                    
+                    var customIcon = L.icon({{
+                        iconUrl: 'data:image/webp;base64,{icon_base64}',
+                        iconSize: [30, 30],
+                        iconAnchor: [15, 15],
+                        popupAnchor: [0, 0]
+                    }}); 
+
+                    var markers = L.markerClusterGroup({{
+                        maxClusterRadius: 50,
+                        iconCreateFunction: function(cluster) {{
+                            var childCount = cluster.getChildCount();
+                            return L.divIcon({{
+                                html: '<div><img src="data:image/webp;base64,{icon_base64}" alt="cluster-icon"/><div class="cluster-count">' + childCount + '</div></div>',
+                                className: 'custom-cluster-icon',
+                                iconSize: [40, 40]
+                            }});
+                        }}
+                    }});
             """)
 
             for name, adm, ctr, lat, lon in station_data:
                 adm_escaped = adm.replace("'", "&#39;").replace('"', '&quot;')
                 ctr_escaped = ctr.replace("'", "&#39;").replace('"', '&quot;')
-                html_parts.append(
-                    f"        L.marker([{lat}, {lon}]).addTo(map).bindPopup('<b>{name}</b><br>Region country code:<b>{ctr_escaped}</b><br>Responsible administration: <b>{adm_escaped}</b>');")
+                html_parts.append(f"""                                  
+                                var marker = L.marker([{lat}, {lon}], {{icon: customIcon}}).bindPopup('<b>{name}</b><br>Region country code:<b>{ctr_escaped}</b><br>Responsible administration: <b>{adm_escaped}</b>');
+                                markers.addLayer(marker);
+                                """)
 
             html_parts.append("""
+                    map.addLayer(markers);
                 </script>
             </body>
             </html>
