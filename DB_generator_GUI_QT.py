@@ -2129,6 +2129,10 @@ class SiteLinkWizard(QMainWindow):
                             (entry_id, station_id))
         self.conn.commit()
 
+    def generate_base64_icon(self, icon_path):
+        with open(icon_path, "rb") as image_file:
+            return base64.b64encode(image_file.read()).decode('utf-8')
+        
     def generateMapHTML(self, station_data):
         wikidata_station = station_data[0]
         wikidata_name = wikidata_station[0]
@@ -2149,6 +2153,9 @@ class SiteLinkWizard(QMainWindow):
         """
         else:
             try:
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                icon_path = os.path.join(script_dir, 'ras_s_icon.webp').replace('\\', '/')
+                icon_base64 = self.generate_base64_icon(icon_path)
                 html_parts = []
                 html_parts.append("""
                 <!DOCTYPE html>
@@ -2247,18 +2254,41 @@ class SiteLinkWizard(QMainWindow):
                             shadowSize: [41, 41]
                         });
                 """)
+                html_parts.append(f"""
+                        var customIcon = L.icon({{
+                            iconUrl: 'data:image/webp;base64,{icon_base64}',
+                            iconSize: [30, 30],
+                            iconAnchor: [15, 15],
+                            popupAnchor: [0, 0]
+                        }}); 
+                        var markers = L.markerClusterGroup({{
+                            maxClusterRadius: 50,
+                            iconCreateFunction: function(cluster) {{
+                                var childCount = cluster.getChildCount();
+                                return L.divIcon({{
+                                    html: '<div><img src="data:image/webp;base64,{icon_base64}" alt="cluster-icon"/><div class="cluster-count">' + childCount + '</div></div>',
+                                    className: 'custom-cluster-icon',
+                                    iconSize: [40, 40]
+                                }});
+                            }}
+                        }});
+                                  
+                """)
 
                 for name, adm, ctr, lat, lon in station_data[1:]:
                     adm_escaped = adm.replace("'", "&#39;").replace('"', '&quot;')
                     ctr_escaped = ctr.replace("'", "&#39;").replace('"', '&quot;')
-                    name_escaped = name.replace("'", "&#39;").replace('"', '&quot;')
-                    html_parts.append(
-                        f"        L.marker([{lat}, {lon}]).addTo(map).bindPopup('<b>ITU Station: {name_escaped}</b><br>Region country code:<b>{ctr_escaped}</b><br>Responsible administration: <b>{adm_escaped}</b>');")
+                    name_escaped = name.replace("'", "&#39;").replace('"', '&quot;')                    
+                    html_parts.append(f"""                                  
+                                    var marker = L.marker([{lat}, {lon}], {{icon: customIcon}}).bindPopup('ITU station: <b>{name}</b><br>Region country code:<b>{ctr_escaped}</b><br>Responsible administration: <b>{adm_escaped}</b>');
+                                    markers.addLayer(marker);
+                                    """)
 
                 html_parts.append(
-                    f"        L.marker([{wikidata_lat}, {wikidata_lon}], {{icon: redIcon}}).addTo(map).bindPopup('<b>Wikidata station: {wikidata_name.replace("'", "&#39;").replace('"', '&quot;')}</b><br>Country:<b>{wikidata_country.replace("'", "&#39;").replace('"', '&quot;')}</b>').openPopup();")
+                    f"        L.marker([{wikidata_lat}, {wikidata_lon}], {{icon: redIcon}}).addTo(map).bindPopup('Wikidata station: <b>{wikidata_name.replace("'", "&#39;").replace('"', '&quot;')}</b><br>Country:<b>{wikidata_country.replace("'", "&#39;").replace('"', '&quot;')}</b>').openPopup();")
 
                 html_parts.append("""
+                    map.addLayer(markers);
                     </script>
                 </body>
                 </html>
