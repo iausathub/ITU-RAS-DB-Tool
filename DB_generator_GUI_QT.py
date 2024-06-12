@@ -2154,14 +2154,25 @@ class SiteLinkWizard(QMainWindow):
                 <!DOCTYPE html>
                 <html>
                 <head>
-                    <title>Full Widget Leaflet Map for Radio Astronomy Stations Database Tool</title>
+                    <title>Full Widget Leaflet Map for Site Link Wizard</title>
                     <meta charset="utf-8" />
                     <link 
                         rel="stylesheet" 
                         href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
                     />
+                    <link
+                        rel="stylesheet"
+                        href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css"
+                    />
+                    <link
+                        rel="stylesheet"
+                        href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css"
+                    />
                     <script 
                         src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+                    </script>
+                    <script
+                        src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js">
                     </script>
                     <style>
                         body {
@@ -2171,6 +2182,39 @@ class SiteLinkWizard(QMainWindow):
                         html, body, #map {
                             height: 100%;
                             width: 100%;
+                        }
+                        .custom-cluster-icon {
+                            background: radial-gradient(circle, white 25%, transparent 75%);
+                            border-radius: 50%;
+                            border: 2px solid rgba(0, 0, 0, 0.5);
+                            text-align: center;
+                            color: black;
+                            font-size: 14px;
+                            font-weight: bold;
+                            width: 40px;
+                            height: 40px;
+                        }
+                        .custom-cluster-icon img {
+                            position: absolute;
+                            top: 50%;
+                            left: 50%;
+                            transform: translate(-50%, -50%);
+                            width: 30px;
+                            height: 30px;
+                        }
+                        .custom-cluster-icon .cluster-count {
+                            position: absolute;
+                            top: -10px;
+                            right: -10px;
+                            background: red;
+                            color: white;
+                            border-radius: 50%;
+                            width: 20px;
+                            height: 20px;
+                            display: flex;
+                            justify-content: center;
+                            align-items: center;
+                            font-size: 12px;
                         }
                     </style>
                 </head>
