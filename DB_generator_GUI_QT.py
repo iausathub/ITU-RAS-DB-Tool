@@ -29,7 +29,7 @@ from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QDesktopWidget, QWidget, QPushButton, QFileDialog, QLabel,
                              QMessageBox, QGridLayout, QGroupBox, QDialog, QTableWidget, QTableWidgetItem, QCheckBox,
                              QHBoxLayout, QProgressDialog, QProgressBar, QListWidget, QSpacerItem, QSizePolicy, 
-                             QListWidgetItem, QStackedLayout)
+                             QListWidgetItem, QStackedLayout, QInputDialog)
 
 from PyQt5.QtGui import QIcon, QPixmap, QDesktopServices, QPainter, QColor
 
@@ -1851,6 +1851,9 @@ class SiteLinkWizard(QMainWindow):
         self.desired_height=900
         self.map_html = ""
         self.initUI()
+        self.csv_file_path = "CPS_unlinked_wikidata_stations.csv"
+        self.initCSV()
+        self.initialised='True'
 
     def initUI(self):
         self.setWindowTitle(
@@ -1895,15 +1898,37 @@ class SiteLinkWizard(QMainWindow):
         self.layout.addWidget(self.showDetailsButton, 3, 2, 1, 2)
 
         self.MapGroup = QGroupBox("Station locations")
-        self.mapLayout = QGridLayout()
+        self.mapLayout = QStackedLayout()
         self.MapGroup.setLayout(self.mapLayout)
         self.browser = QWebEngineView()
+        self.loading_widget = LoadingWidget()
+
         self.mapLayout.addWidget(self.browser)
+        self.mapLayout.addWidget(self.loading_widget)
+        self.mapLayout.setCurrentWidget(self.loading_widget)
         self.layout.addWidget(self.MapGroup, 4, 0, 2, 4)
 
         self.buttonsLayout = QHBoxLayout()
-        self.confirmButton = QPushButton("Confirm Match")
+        self.confirmButton = QPushButton()
         self.noMatchButton = QPushButton("No Match")
+
+        self.confirmButton.setFixedHeight(60)
+        self.noMatchButton.setFixedHeight(60)
+
+        self.confidentCheckBox = QCheckBox("Confident match")
+        self.confidentCheckBox.setFixedHeight(30)
+        self.confidentCheckBox.setChecked(False)
+
+        confirmButtonLayout = QGridLayout()
+
+        confirmLabel = QLabel("Confirm Match")
+        confirmLabel.setAlignment(Qt.AlignCenter)
+        confirmButtonLayout.addWidget(confirmLabel, 0, 0, 1, 3)
+        confirmButtonLayout.addWidget(self.confidentCheckBox, 0, 3, 1, 1)
+
+        confirmButtonWidget = QWidget()
+        confirmButtonWidget.setLayout(confirmButtonLayout)
+        self.confirmButton.setLayout(confirmButtonLayout)
 
         self.buttonsLayout.addWidget(self.confirmButton)
         self.buttonsLayout.addWidget(self.noMatchButton)
@@ -1922,6 +1947,22 @@ class SiteLinkWizard(QMainWindow):
         self.setFocus()
         self.raise_()
         self.activateWindow()
+
+    def onLoadFinished(self, ok):
+        if ok:
+            self.mapLayout.setCurrentWidget(self.browser)
+
+    def initCSV(self):
+        """Initialize the CSV file with headers."""
+        with open(self.csv_file_path, 'w', newline='') as csvfile:
+            csvwriter = csv.writer(csvfile)
+            csvwriter.writerow(["Station Name", "Country", "Coordinates", "Source", "Comment"])
+
+    def addToCSV(self, station_name, country, coordinates, source, comment):
+        """Add a new row to the CSV file."""
+        with open(self.csv_file_path, 'a', newline='') as csvfile:
+            csvwriter = csv.writer(csvfile)
+            csvwriter.writerow([station_name, country, coordinates, source, comment])
 
     def load_data(self):
         self.conn = sqlite3.connect(self.filePath) # type: ignore
@@ -1969,7 +2010,9 @@ class SiteLinkWizard(QMainWindow):
                 self.confirmButton.setEnabled(False)
             else:
                 self.confirmButton.setEnabled(True)
-
+            
+            self.browser.loadFinished.connect(self.onLoadFinished)
+            self.mapLayout.setCurrentWidget(self.loading_widget)
             self.map_html = self.generateMapHTML(self.station_data)
             self.browser.setHtml(self.map_html)
         else:
@@ -2051,10 +2094,7 @@ class SiteLinkWizard(QMainWindow):
                     self.details_window = DatabaseEntryDetails(ntc_id=str(matched_station[17]), station_name=matched_station[2], parent=self)
         else:                    
             QMessageBox.critical(self, "Database Connection Error",
-                                    "An error occurred while connecting to the database, no details will be shown")
-
-
-        
+                                    "An error occurred while connecting to the database, no details will be shown")        
 
     def find_closest_stations(self, entry):
         latitude = entry[4]
@@ -2096,7 +2136,13 @@ class SiteLinkWizard(QMainWindow):
         return distance
     
     def confirm_match(self):
-        entry_id = self.wikidata_entries[self.current_index][0]
+        entry = self.wikidata_entries[self.current_index]
+        entry_id = entry[0]
+        entry_name = entry[1]
+        entry_country = entry[2]
+        entry_lat = entry[4]
+        entry_lon = entry[3]
+        entry_source = entry[5]
         any_checked = False
         for i in range(self.stationsList.count()):
             item = self.stationsList.item(i)
@@ -2108,18 +2154,63 @@ class SiteLinkWizard(QMainWindow):
                     self.update_wikidata_entry(self.current_index, matched_station[0])
         if any_checked:
             self.cursor.execute("UPDATE wikidata SET \"Linked ITU\" = 1 WHERE \"CPS Wiki ID\" = ?", (entry_id,))
+            if self.confidentCheckBox.isChecked():
+                self.conn.commit()
+                self.next_entry()
+            else:                
+                dialog = QInputDialog(self)
+                dialog.setWindowTitle('Comment request')
+                dialog.setLabelText('Reason for accepting with low confidence:')
+                dialog.setInputMode(QInputDialog.TextInput)
+                dialog.resize(400, 200)
+                if dialog.exec_() == QInputDialog.Accepted:
+                    comment = dialog.textValue()
+                    if comment:
+                        coordinates = f"{entry_lat}, {entry_lon}"
+                        self.addToCSV(entry_name, entry_country, coordinates, entry_source, "Station accepted with low confidence: " + comment)
+                        self.conn.commit()
+                        self.next_entry()
+                    else:
+                        QMessageBox.warning(self, "Warning", "Comment is required")
+                        self.conn.rollback()
         else:
-            self.cursor.execute("UPDATE wikidata SET \"Linked ITU\" = 0 WHERE \"CPS Wiki ID\" = ?", (entry_id,))
-        self.conn.commit()
-        self.next_entry()
+            QMessageBox.critical(self, "Error", 'You need to select at least one corresponding ITU station or to use "No match" button')
 
     def no_match(self):
-        entry_id = self.wikidata_entries[self.current_index][0]
-        self.cursor.execute("UPDATE wikidata SET \"Linked ITU\" = 0 WHERE \"CPS Wiki ID\" = ?", (entry_id,))
-        self.conn.commit()
-        self.next_entry()
+        entry = self.wikidata_entries[self.current_index]
+        entry_id = entry[0]
+        entry_name = entry[1]
+        entry_country = entry[2]
+        entry_lat = entry[4]
+        entry_lon = entry[3]
+        entry_source = entry[5]
+
+        if entry_lat is None or entry_lon is None:
+            self.addToCSV(entry_name, entry_country, "N/A", entry_source, "No coordinates available")
+            self.cursor.execute("UPDATE wikidata SET \"Linked ITU\" = 0 WHERE \"CPS Wiki ID\" = ?", (entry_id,))
+            self.conn.commit()
+            self.next_entry()
+        else:
+            dialog = QInputDialog(self)
+            dialog.setWindowTitle('Comment request')
+            dialog.setLabelText('Reason for rejecting candidates:')
+            dialog.setInputMode(QInputDialog.TextInput)
+            dialog.resize(400, 200)
+            if dialog.exec_() == QInputDialog.Accepted:
+                comment = dialog.textValue()
+                if comment:
+                    coordinates = f"{entry_lat}, {entry_lon}"
+                    self.addToCSV(entry_name, entry_country, coordinates, entry_source, comment)
+                    self.cursor.execute("UPDATE wikidata SET \"Linked ITU\" = 0 WHERE \"CPS Wiki ID\" = ?", (entry_id,))
+                    self.conn.commit()
+                    self.next_entry()                
+                else:
+                    QMessageBox.warning(self, "Warning", "Comment is required")
+        
+
 
     def next_entry(self):
+        self.confidentCheckBox.setChecked(False)
         self.current_index += 1
         self.show_entry()
 
@@ -2316,6 +2407,7 @@ class SiteLinkWizard(QMainWindow):
             self.browser.deleteLater()
             self.browser = QWebEngineView()
             self.mapLayout.addWidget(self.browser)
+            self.browser.loadFinished.connect(self.onLoadFinished)
             self.browser.setHtml(self.map_html)
 
     def closeEvent(self, event):
