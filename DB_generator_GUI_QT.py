@@ -10,6 +10,7 @@ v0.1a - Initial release
 v0.1b - Fixed the bug in saving whole DB as a word function (incorrect evaluation of station frequency boundaries) and added VLBI Key. Also added an option to save the DB as SQLite DB.
 v0.2a - Added a Wikidata query to the SQLite DB and Site Link Wizard to Link Wikidata stations with ITU ones
 v0.2b - Fixed bugs with incorrect js build in Link Wizard
+v.0.3 - Added possibility to review outcome DB
 
 IDE used: VSCode with enviroment set and controlled by Anaconda
 """
@@ -1027,8 +1028,8 @@ class AboutDialog(QDialog):
         layout.addWidget(imageLabel, 0, 0, 2, 1)
 
         textLabel1 = QLabel("This tool helps with importing ITU database for IAU CPS RAS database.\n\n"
-                            "Program version: v0.2a\n\n"
-                            "This version introduced Site Link Wizard to connect wikidata entries to ITU\n\n", self)
+                            "Program version: v0.3\n\n"
+                            "This version introduced IAU CPS RAS database viewier to make it useful to end users\n\n", self)
         textLabel1.setWordWrap(True)
         layout.addWidget(textLabel1, 0, 1)
 
