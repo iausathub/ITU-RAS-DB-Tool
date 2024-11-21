@@ -23,13 +23,15 @@ import docx
 from docx.enum.section import WD_ORIENT
 from SPARQLWrapper import SPARQLWrapper, JSON
 import numpy as np
+import html
+import datetime
 
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QDesktopWidget, QWidget, QPushButton, QFileDialog, QLabel,
                              QMessageBox, QGridLayout, QGroupBox, QDialog, QTableWidget, QTableWidgetItem, QCheckBox,
                              QHBoxLayout, QProgressDialog, QProgressBar, QListWidget, QSpacerItem, QSizePolicy, 
-                             QListWidgetItem, QStackedLayout, QInputDialog)
+                             QListWidgetItem, QStackedLayout, QInputDialog, QAbstractItemView)
 
 from PyQt5.QtGui import QIcon, QPixmap, QDesktopServices, QPainter, QColor
 
@@ -112,7 +114,7 @@ class MainApp(QMainWindow):
 
         self.ituToolsGroup.setLayout(gridLayoutITU)
 
-        # Create a group box for ITU Database tools
+        # Create a group box for export tools
         self.exportToolsGroup = QGroupBox('Export Tools')
         gridLayoutExport = QGridLayout()
 
@@ -137,12 +139,52 @@ class MainApp(QMainWindow):
         self.button_export_SQLite.setToolTip('Connect ITU database first.')
         gridLayoutExport.addWidget(self.button_export_SQLite, 0, 2)
 
-        self.button_runSiteLinkWizard = QPushButton(
-            'Run Site Link Wizard', self)
-        self.button_runSiteLinkWizard.clicked.connect(self.run_site_link_wizard)
-        gridLayoutExport.addWidget(self.button_runSiteLinkWizard, 1, 0)
-
         self.exportToolsGroup.setLayout(gridLayoutExport)
+
+        # Create a group box for IAU CPS Database tools
+        self.iauToolsGroup = QGroupBox('IAU CPS Database Tools')
+        gridLayoutIAU = QGridLayout()
+
+        self.button_select_iau_db = QPushButton('Select IAU Database to review', self)
+        self.button_select_iau_db.clicked.connect(self.select_iau_database)
+        gridLayoutIAU.addWidget(self.button_select_iau_db, 0, 0)
+
+        self.statusLight_select_iau_db = QLabel(self)
+        self.statusLight_select_iau_db.setFixedSize(20, 20)
+        self.updateStatusLight(self.statusLight_select_iau_db, False, 'IAU Database not selected.')
+        gridLayoutIAU.addWidget(self.statusLight_select_iau_db, 0, 1)
+        gridLayoutIAU.setColumnStretch(1, 0)
+
+        self.button_connect_iau_db = QPushButton('Connect to selected database', self)
+        self.button_connect_iau_db.clicked.connect(self.connect_iau_database)
+        self.button_connect_iau_db.setEnabled(False)
+        self.button_connect_iau_db.setToolTip('Select an IAU database first.')
+        gridLayoutIAU.addWidget(self.button_connect_iau_db, 1, 0)
+
+        self.statusLight_connect_iau_db = QLabel(self)
+        self.statusLight_connect_iau_db.setFixedSize(20, 20)
+        self.updateStatusLight(self.statusLight_connect_iau_db, False, 'IAU Database not connected.')
+        gridLayoutIAU.addWidget(self.statusLight_connect_iau_db, 1, 1)
+        gridLayoutIAU.setColumnStretch(1, 0)
+
+        self.button_show_iau_itu_list = QPushButton('Show the list of ITU radio astronomy stations', self)
+        self.button_show_iau_itu_list.clicked.connect(self.show_iau_itu_station_list)
+        self.button_show_iau_itu_list.setEnabled(False)
+        self.button_show_iau_itu_list.setToolTip('Connect an IAU database first.')
+        gridLayoutIAU.addWidget(self.button_show_iau_itu_list, 2, 0)
+
+        self.button_show_iau_wikidata_list = QPushButton('Show the list of WikiData radio astronomy stations', self)
+        self.button_show_iau_wikidata_list.clicked.connect(self.show_iau_wikidata_station_list)
+        self.button_show_iau_wikidata_list.setEnabled(False)
+        self.button_show_iau_wikidata_list.setToolTip('Connect an IAU database first.')
+        gridLayoutIAU.addWidget(self.button_show_iau_wikidata_list, 3, 0)
+
+        self.button_site_link_wizard = QPushButton('Site Link Wizard', self)
+        self.button_site_link_wizard.clicked.connect(self.run_site_link_wizard)
+        gridLayoutIAU.addWidget(self.button_site_link_wizard, 4, 0)
+
+        self.iauToolsGroup.setLayout(gridLayoutIAU)
+
 
         # Setting central widget
         centralWidget = QWidget()
@@ -152,6 +194,7 @@ class MainApp(QMainWindow):
         mainLayout = QGridLayout(centralWidget)
         mainLayout.addWidget(self.ituToolsGroup, 0, 0)
         mainLayout.addWidget(self.exportToolsGroup, 1, 0)
+        mainLayout.addWidget(self.iauToolsGroup, 2, 0)
 
         self.statusBar().showMessage('    Ready')
         self.statusBar().setStyleSheet("""
@@ -778,6 +821,66 @@ class MainApp(QMainWindow):
         self.connectionStatus = status_text
         widget.setToolTip(status_text)
 
+    def select_iau_database(self):
+    # Selecting IAU CPS database
+        options = QFileDialog.Options()
+        self.iau_database_file_name, _ = QFileDialog.getOpenFileName(
+            self, "Select IAU Database File", "", "SQLite Files (*.db);;All Files (*)", options=options)
+        if self.iau_database_file_name:
+            self.statusBar().showMessage(f'    IAU Database file selected: {self.iau_database_file_name}')
+            self.updateStatusLight(self.statusLight_select_iau_db, True, 'IAU Database selected')
+            self.button_connect_iau_db.setEnabled(True)
+            self.button_connect_iau_db.setToolTip(None)
+        else:
+            self.updateStatusLight(self.statusLight_select_iau_db, False, 'IAU Database not selected')
+            self.button_connect_iau_db.setEnabled(False)
+            self.button_connect_iau_db.setToolTip('Select an IAU database first.')
+            self.button_show_iau_list.setEnabled(False)
+            self.button_show_iau_list.setToolTip('Connect an IAU database first.')
+
+    def connect_iau_database(self):
+        try:
+            # Closing last connection if any
+            if hasattr(self, 'iau_db_connection') and self.iau_db_connection:
+                self.iau_db_connection.close()
+        except Exception as e:
+            pass
+
+        try:
+            # Connecting to the IAU CPS database
+            self.iau_db_connection = sqlite3.connect(self.iau_database_file_name)
+            self.updateStatusLight(self.statusLight_connect_iau_db, True, 'IAU Database connected')
+            self.statusBar().showMessage('    IAU Database connected.')
+            self.button_show_iau_itu_list.setEnabled(True)
+            self.button_show_iau_itu_list.setToolTip(None)
+            self.button_show_iau_wikidata_list.setEnabled(True)
+            self.button_show_iau_wikidata_list.setToolTip(None)
+            self.database_date = datetime.datetime.fromtimestamp(os.path.getctime(self.iau_database_file_name))
+        except Exception as e:
+            QMessageBox.critical(self, "IAU Database Connection Error",
+                                f"An error occurred while connecting to the IAU database:\n{e}")
+            self.updateStatusLight(self.statusLight_connect_iau_db, False, 'IAU Database connection error')
+            self.statusBar().showMessage('    IAU Database connection error')
+            self.button_show_iau_itu_list.setEnabled(False)
+            self.button_show_iau_itu_list.setToolTip('Connect an IAU database first.')
+            self.button_show_iau_wikidata_list.setEnabled(False)
+            self.button_show_iau_wikidata_list.setToolTip('Connect an IAU database first.')
+
+    def show_iau_itu_station_list(self):
+        self.animateClosing(self)
+        self.showMinimized()
+        self.setEnabled(False)
+        self.iau_station_list_window = IAUStationListWindow(self)
+
+    def show_iau_wikidata_station_list(self):
+        self.animateClosing(self)
+        self.showMinimized()
+        self.setEnabled(False)
+        self.iau_station_list_window_wikidata = IAUStationListWindow_wikidata(self)
+
+
+
+
     def centerWindow(self, window, parent=None):
         # Center the window on the screen or parent window
         if parent:
@@ -1036,6 +1139,7 @@ class InteractiveDatabase(QMainWindow):
                 self.tableWidget.setItem(row_num, column_num, item)
 
         self.tableWidget.resizeColumnsToContents()
+        self.tableWidget.setSelectionBehavior(QAbstractItemView.SelectRows)
 
     def updateTableDisplay(self):
         displayNames = self.displayNamesCheckbox.isChecked()
@@ -1246,7 +1350,7 @@ class MapWindow(QMainWindow):
 
     def initUI(self):
         self.setWindowTitle(
-            f'Radio astronomy stations on a map as per database {self.parent.parent.database_version} published on {self.parent.parent.database_date.date()}') # type: ignore
+            f'Radio astronomy stations on a map as per database {self.parent.parent.database_version} published on {self.parent.parent.database_date}') # type: ignore
         self.setWindowIcon(QIcon('cps-logo-mono.ico'))
 
         self.parent.parent.centerWindow(self, self.parent) # type: ignore
@@ -1449,13 +1553,13 @@ class MapWindow(QMainWindow):
 
     def saveScreenshot(self):
         filePath, _ = QFileDialog.getSaveFileName(
-            self, "Save Screenshot", f"RAS_DB_MAP_{self.parent.parent.database_version}_{self.parent.parent.database_date.date()}", "PNG Files (*.png)") # type: ignore
+            self, "Save Screenshot", f"RAS_DB_MAP_{self.parent.parent.database_version}_{self.parent.parent.database_date}", "PNG Files (*.png)") # type: ignore
         if filePath:
             self.browser.grab().save(filePath)
 
     def saveHTML(self):
         filePath, _ = QFileDialog.getSaveFileName(
-            self, "Save HTML", f"RAS_DB_MAP_{self.parent.parent.database_version}_{self.parent.parent.database_date.date()}", "HTML Files (*.html)") # type: ignore
+            self, "Save HTML", f"RAS_DB_MAP_{self.parent.parent.database_version}_{self.parent.parent.database_date}", "HTML Files (*.html)") # type: ignore
         if filePath:
             def save_html(html):
                 with open(filePath, "w", encoding='utf-8') as file:
@@ -1473,6 +1577,23 @@ class MapWindow(QMainWindow):
             self.parent.activateWindow()
             self.parent.setEnabled(True)
 
+class NumericSortItem(QTableWidgetItem):
+    def __init__(self, value):
+        super().__init__(str(value))
+        try:
+            self.value = float(value)
+        except ValueError:
+            self.value = None
+
+    def __lt__(self, other):
+        if isinstance(other, NumericSortItem):
+            if self.value is not None and other.value is not None:
+                return self.value < other.value
+            elif self.value is None:
+                return False
+            else:
+                return True
+        return super().__lt__(other)
 
 class DatabaseEntryDetails(QMainWindow):
     def __init__(self, ntc_id=None, station_name=None, parent=None):
@@ -1563,7 +1684,7 @@ class DatabaseEntryDetails(QMainWindow):
 
     def load_data(self):
         SQL = f"SELECT long_deg, long_ew, long_min, long_sec, lat_deg, lat_ns, lat_min, lat_sec, elev_min, elev_max, azm_fr, azm_to, ant_alt FROM e_stn WHERE ntc_id={str(self.ntc_id)};"
-        self.station_rows = self.parent.parent.parse_database(SQL) # type: ignore
+        self.station_rows = self.parent.parent.parse_database(SQL)
 
         self.stationInfoTable.setRowCount(len(self.station_rows))
         for row_num, row_data in enumerate(self.station_rows):
@@ -1579,30 +1700,26 @@ class DatabaseEntryDetails(QMainWindow):
                 self.stationInfoTable.setItem(row_num, column_num+1, item)
 
         self.stationInfoTable.resizeColumnsToContents()
+        self.stationInfoTable.setSelectionBehavior(QAbstractItemView.SelectRows)
+
 
         SQL = f"SELECT beam_name, pattern_id, ant_diam, gain FROM e_ant WHERE ntc_id={str(self.ntc_id)};"
-        self.beam_rows = self.parent.parent.parse_database(SQL) # type: ignore
+        self.beam_rows = self.parent.parent.parse_database(SQL)
 
         self.beamInfoTable.setRowCount(0)
         for beam_index, beam_row_data in enumerate(self.beam_rows):
             beam_name = beam_row_data[0]
             SQL = f"SELECT noise_t, freq_min, freq_max, ra_stn_type FROM grp WHERE ntc_id={str(self.ntc_id)} AND beam_name='{beam_name}';"
-            self.grp_rows = self.parent.parent.parse_database(SQL) # type: ignore
+            self.grp_rows = self.parent.parent.parse_database(SQL)
 
             SQL = f"SELECT freq_mhz FROM freq WHERE ntc_id={str(self.ntc_id)} AND beam_name='{beam_name}';"
-            self.freq_rows = self.parent.parent.parse_database(SQL) # type: ignore
+            self.freq_rows = self.parent.parent.parse_database(SQL)
 
             if not beam_row_data[1] == None:
                 SQL = f"SELECT pattern FROM ant_type WHERE pattern_id={beam_row_data[1]};"
                 try:
-                    antenna_code = self.parent.parent.parse_database(SQL)[0][0] # type: ignore
+                    antenna_code = self.parent.parent.parse_database(SQL)[0][0]
                 except:
-                    try:
-                        antenna_code = self.parent.parent.parse_database(SQL)[ # type: ignore
-                            0]
-                    except:
-                        antenna_code = None
-                if antenna_code == None:
                     antenna_code = 'N/A'
             else:
                 antenna_code = 'N/A'
@@ -1612,8 +1729,7 @@ class DatabaseEntryDetails(QMainWindow):
                 self.beamInfoTable.insertRow(current_row_count)
                 freq_row_data = self.freq_rows[grp_index][0]
 
-                combined_row_data = list(
-                    beam_row_data) + list(grp_row_data) + [freq_row_data]
+                combined_row_data = list(beam_row_data) + list(grp_row_data) + [freq_row_data]
 
                 for column_num, data in enumerate(combined_row_data):
                     if data == None:
@@ -1625,12 +1741,16 @@ class DatabaseEntryDetails(QMainWindow):
                             data = 'Single'
                         elif data == 'V':
                             data = 'VLBI'
-                    item = QTableWidgetItem(str(data))
+                    if column_num in [2, 3, 4, 5, 6, 8]:
+                        item = NumericSortItem(data)
+                    else:
+                        item = QTableWidgetItem(str(data))
                     item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-                    self.beamInfoTable.setItem(
-                        current_row_count, column_num, item)
+                    self.beamInfoTable.setItem(current_row_count, column_num, item)
 
         self.beamInfoTable.resizeColumnsToContents()
+        self.beamInfoTable.setSelectionBehavior(QAbstractItemView.SelectRows)
+
 
     def generateMapHTML(self):
         SQL = f"SELECT adm, ctry, stn_name, long_dec, lat_dec FROM com_el WHERE ntc_id={str(self.ntc_id)};"
@@ -1840,6 +1960,450 @@ class DatabaseEntryDetails(QMainWindow):
             self.parent.raise_()
             self.parent.activateWindow()
             self.parent.setEnabled(True)
+
+class IAUStationListWindow(QMainWindow):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent = parent
+        self.country_codes = self.parent.load_country_codes()
+
+        self.desired_width = 1600
+        self.desired_height = 900
+        self.parent.database_version = "IAU CPS ITU extract"
+        self.initUI()
+
+    def initUI(self):
+        self.setWindowTitle(f'IAU CPS Wikidata Radio Astronomy Stations published on {self.parent.database_date}')
+        self.setWindowIcon(QIcon('cps-logo-mono.ico'))
+
+        self.parent.centerWindow(self, self.parent)
+        self.parent.animateOpening(self, self.desired_width, self.desired_height)
+
+        centralWidget = QWidget(self)
+        self.setCentralWidget(centralWidget)
+        layout = QGridLayout(centralWidget)
+
+        self.tableWidget = QTableWidget()
+        headers = ["CPS Station ID", "Country", "Short Name", "Long Name", "Type", 
+                   "Station longitude [deg]", "Station latitude [deg]", 
+                   "Station altitude (amsl) [m]", "Min station frequency [MHz]", 
+                   "Max station frequency [MHz]", "Contact / Website", "Contact / Address", 
+                   "Contact / Phone", "Contact / Email", "Registered at ITU", "ITU Notice ID", 
+                   "ITU responsible Administration"]
+        self.tableWidget.setColumnCount(len(headers))
+        self.tableWidget.setHorizontalHeaderLabels(headers)
+        self.tableWidget.setSortingEnabled(True)
+        self.load_data()
+        self.tableWidget.cellDoubleClicked.connect(self.openStationDetails)
+        layout.addWidget(self.tableWidget, 0, 0, 8, 1)
+
+        self.interactionPanel = QGroupBox('Interaction Panel')
+        layout_interaction = QGridLayout(self.interactionPanel)
+        saveCsvButton = QPushButton("Save as CSV", self.interactionPanel)
+        layout_interaction.addWidget(saveCsvButton, 0, 0)
+        saveCsvButton.clicked.connect(self.saveAsCsv)
+
+        saveWordButton = QPushButton("Save as DOCX", self.interactionPanel)
+        layout_interaction.addWidget(saveWordButton, 0, 1)
+        saveWordButton.clicked.connect(self.saveAsWord)
+
+        showMapButton = QPushButton("Show Map", self.interactionPanel)
+        layout_interaction.addWidget(showMapButton, 1, 0)
+        showMapButton.clicked.connect(self.showMap)
+
+        layout.addWidget(self.interactionPanel, 8, 0, 2, 1)
+
+        self.statusBar().showMessage('    Ready')
+        self.statusBar().setStyleSheet("""
+            QStatusBar {
+                background-color: #404040;
+                color: white;
+                border: 2px solid black;
+            }
+        """)
+        self.show()
+        self.setFocus()
+        self.raise_()
+        self.activateWindow()
+
+    def load_data(self):
+        query = '''SELECT 
+                "CPS Station ID", "Country", "Short Name", "Long Name", "Type", 
+                "Station longitude [deg]", "Station latitude [deg]", 
+                "Station altitude (amsl) [m]", "Min station frequency [MHz]", 
+                "Max station frequency [MHz]", "Contact / Website", "Contact / Address", 
+                "Contact / Phone", "Contact / Email", "Registered at ITU", "ITU Notice ID", 
+                "ITU responsible Administration" 
+                FROM Stations'''
+        cursor = self.parent.iau_db_connection.cursor()
+        cursor.execute(query)
+        self.rows = cursor.fetchall()
+
+        self.tableWidget.setRowCount(len(self.rows))
+        for row_num, row_data in enumerate(self.rows):
+            for column_num, data in enumerate(row_data):
+                if data is None:
+                    data = 'N/A'
+                item = QTableWidgetItem(str(data))
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                self.tableWidget.setItem(row_num, column_num, item)
+
+        self.tableWidget.resizeColumnsToContents()
+        self.tableWidget.setSelectionBehavior(QAbstractItemView.SelectRows)
+
+
+    def openStationDetails(self, row, column):
+        station_id_item = self.tableWidget.item(row, 0)
+        station_name_item = self.tableWidget.item(row, 2)
+
+        station_id = station_id_item.text() if station_id_item else "Unknown"
+        station_name = station_name_item.text() if station_name_item else "Unknown"
+
+        self.parent.animateClosing(self)
+        self.showMinimized()
+        self.setEnabled(False)
+        self.detailsWindow = IAUStationDetailsWindow(station_id, station_name, self)
+
+    def saveAsCsv(self):
+        filePath, _ = QFileDialog.getSaveFileName(
+            self, "Save as CSV", f"IAU_CPS_RAS_DB_OVERVIEW_CSV", "CSV Files (*.csv)")
+        if filePath:
+            try:
+                with open(filePath, 'w', newline='', encoding='utf-8-sig') as file:
+                    writer = csv.writer(file)
+                    headers = [self.tableWidget.horizontalHeaderItem(
+                        i).text() for i in range(self.tableWidget.columnCount())]
+                    writer.writerow(headers)
+                    for row in range(self.tableWidget.rowCount()):
+                        rowData = [self.tableWidget.item(row, i).text() if self.tableWidget.item(
+                            row, i) else '' for i in range(self.tableWidget.columnCount())]
+                        writer.writerow(rowData)
+            except Exception as e:
+                QMessageBox.critical(self, "CSV saving Error",
+                                     f"An error occurred while preparing the csv file:\n{e}")
+
+    def saveAsWord(self):
+        filePath, _ = QFileDialog.getSaveFileName(
+            self, "Save as DOCX", f"IAU_CPS_RAS_DB_OVERVIEW_DOCX", "Word Files (*.docx)")
+        if filePath:
+            doc = docx.Document()
+            section = doc.sections[0]
+            section.orientation = WD_ORIENT.LANDSCAPE
+            section.page_width, section.page_height = section.page_height, section.page_width
+
+            doc.add_heading('Overview of IAU CPS RAS Database', level=1)
+
+            table = doc.add_table(rows=1, cols=self.tableWidget.columnCount())
+            header_cells = table.rows[0].cells
+
+            for column in range(self.tableWidget.columnCount()):
+                header = self.tableWidget.horizontalHeaderItem(column)
+                if header:
+                    header_cells[column].text = header.text()
+
+            for row in range(self.tableWidget.rowCount()):
+                row_cells = table.add_row().cells
+                for col in range(self.tableWidget.columnCount()):
+                    item = self.tableWidget.item(row, col)
+                    row_cells[col].text = item.text() if item else ""
+
+            try:
+                doc.save(filePath)
+            except Exception as e:
+                QMessageBox.critical(self, "Docx saving Error",
+                                     f"An error occurred while preparing the docx file:\n{e}")
+                
+    def showMap(self):
+        station_data = []
+        for row in range(self.tableWidget.rowCount()):
+            admin = html.escape(self.tableWidget.item(row, 16).text())  # CPS Station ID
+            country = html.escape(self.tableWidget.item(row, 1).text())  # Country
+            latitude = self.tableWidget.item(row, 6).text()  # Latitude
+            longitude = self.tableWidget.item(row, 5).text()  # Longitude
+            short_name = html.escape(self.tableWidget.item(row, 2).text())  # Long Name
+
+            if latitude and longitude:
+                try:
+                    station_data.append((short_name, admin, country, float(latitude), float(longitude)))
+                except ValueError:
+                    continue  # Skip rows with invalid latitude/longitude
+
+        # Open the MapWindow and pass the station data
+        self.parent.animateClosing(self) # type: ignore
+        self.showMinimized()
+        self.setEnabled(False)
+        self.map_window = MapWindow(station_data, parent=self)
+
+    def closeEvent(self, event):
+        if self.parent:
+            self.parent.animateClosing(self)
+            self.parent.showNormal()
+            self.parent.animateOpening(self.parent, self.parent.desired_width, self.parent.desired_height)
+            self.parent.setFocus()
+            self.parent.raise_()
+            self.parent.activateWindow()
+            self.parent.setEnabled(True)
+
+class IAUStationDetailsWindow(QMainWindow):
+    def __init__(self, station_id=None, station_name=None, parent=None):
+        super().__init__(parent)
+        self.parent = parent
+        self.station_id = station_id
+        self.station_name = station_name
+        self.initUI()
+
+    def initUI(self):
+        self.setWindowTitle(f'Details of station {self.station_name} (CPS Station ID: {self.station_id})')
+        self.setWindowIcon(QIcon('cps-logo-mono.ico'))
+
+        # Center the window on the screen or parent
+        self.parent.parent.centerWindow(self, self.parent)
+        self.parent.parent.animateOpening(self, desired_width=1600, desired_height=900)
+
+        centralWidget = QWidget(self)
+        self.setCentralWidget(centralWidget)
+        layout = QGridLayout(centralWidget)
+
+
+        antennasInfoPanel = QGroupBox('Antennas Information [ITU Beams]')
+        self.antennasInfoLayout = QGridLayout(antennasInfoPanel)
+        self.antennasInfoTable = QTableWidget()
+        antenna_headers = ["Antenna ID", "Longitude", "Latitude", "Altitude (WGS84)", "Diameter (m)", "Min Frequency (MHz)", "Max Frequency (MHz)"]
+        self.antennasInfoTable.setColumnCount(len(antenna_headers))
+        self.antennasInfoTable.setHorizontalHeaderLabels(antenna_headers)
+        self.antennasInfoTable.setSortingEnabled(True)
+
+        self.load_antenna_details()
+
+        self.antennasInfoLayout.addWidget(self.antennasInfoTable)
+        layout.addWidget(antennasInfoPanel, 0, 0, 1, 2)
+
+        frequencyBandsInfoPanel = QGroupBox('Frequency Bands Information ()')
+        self.frequencyBandsInfoLayout = QGridLayout(frequencyBandsInfoPanel)
+        self.frequencyBandsInfoTable = QTableWidget()
+        frequency_headers = ["Band ID", "Min Frequency (MHz)", "Max Frequency (MHz)", "Bandwidth (MHz)"]
+        self.frequencyBandsInfoTable.setColumnCount(len(frequency_headers))
+        self.frequencyBandsInfoTable.setHorizontalHeaderLabels(frequency_headers)
+        self.frequencyBandsInfoTable.setSortingEnabled(True)
+
+        self.frequencyBandsInfoLayout.addWidget(self.frequencyBandsInfoTable)
+        layout.addWidget(frequencyBandsInfoPanel, 1, 0, 1, 2)
+
+        self.show()
+        self.setFocus()
+        self.raise_()
+        self.activateWindow()
+
+    def load_antenna_details(self):        
+        # Query the IAU CPS database for detailed antenna information using station_id
+        query = '''
+        SELECT "CPS Antenna ID", "Antenna longitude [deg]", "Antenna latitude [deg]", 
+               "Antenna altitude (WGS84) [m]", "Antenna diameter [m]", 
+               "Minimum frequency [MHz]", "Maximum frequency [MHz]"
+        FROM Antennas
+        WHERE "CPS Station ID" = ?
+        '''
+        # Execute the query with the station ID
+        cursor = self.parent.parent.iau_db_connection.cursor()
+        cursor.execute(query, (self.station_id,))
+        antennas = cursor.fetchall()
+
+        self.antennasInfoTable.setRowCount(len(antennas))
+        for row_idx, antenna in enumerate(antennas):
+            for col_idx, data in enumerate(antenna):
+                if data == None:
+                    data = 'N/A'
+                if col_idx in [0,1,2,5,6]:
+                    item = NumericSortItem(data)
+                else:
+                    item = QTableWidgetItem(str(data))                
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                self.antennasInfoTable.setItem(row_idx, col_idx, item)
+        self.antennasInfoTable.resizeColumnsToContents()
+
+        if len(antennas) > 0:
+            self.antennasInfoTable.selectRow(0)  # Select the first row
+            self.antennasInfoTable.setSelectionBehavior(QAbstractItemView.SelectRows)
+
+    def closeEvent(self, event):
+        if self.parent:
+            self.parent.parent.animateClosing(self)
+            self.parent.showNormal()
+            self.parent.parent.animateOpening(
+                self.parent, self.parent.desired_width, self.parent.desired_height)
+            self.parent.setFocus()
+            self.parent.raise_()
+            self.parent.activateWindow()
+            self.parent.setEnabled(True)
+
+class IAUStationListWindow_wikidata(QMainWindow):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent = parent
+        self.desired_width = 1600
+        self.desired_height = 900
+        self.parent.database_version = "IAU CPS Wikidata extract"
+        self.initUI()
+
+    def initUI(self):
+        self.setWindowTitle(f'IAU CPS Wikidata Radio Astronomy Stations published on {self.parent.database_date}')
+        self.setWindowIcon(QIcon('cps-logo-mono.ico'))
+
+        self.parent.centerWindow(self, self.parent)
+        self.parent.animateOpening(self, self.desired_width, self.desired_height)
+
+        centralWidget = QWidget(self)
+        self.setCentralWidget(centralWidget)
+        layout = QGridLayout(centralWidget)
+
+        self.tableWidget = QTableWidget()
+        headers = ["Name", "Country", "Station longitude [deg]", "Station latitude [deg]", "Source"]
+        self.tableWidget.setColumnCount(len(headers))
+        self.tableWidget.setHorizontalHeaderLabels(headers)
+        self.tableWidget.setSortingEnabled(True)
+        self.load_data()
+        layout.addWidget(self.tableWidget, 0, 0, 8, 1)
+
+        self.interactionPanel = QGroupBox('Interaction Panel')
+        layout_interaction = QGridLayout(self.interactionPanel)
+        saveCsvButton = QPushButton("Save as CSV", self.interactionPanel)
+        layout_interaction.addWidget(saveCsvButton, 0, 0)
+        saveCsvButton.clicked.connect(self.saveAsCsv)
+
+        saveWordButton = QPushButton("Save as DOCX", self.interactionPanel)
+        layout_interaction.addWidget(saveWordButton, 0, 1)
+        saveWordButton.clicked.connect(self.saveAsWord)
+
+        showMapButton = QPushButton("Show Stations on the Map", self.interactionPanel)
+        layout_interaction.addWidget(showMapButton, 1, 0)
+        showMapButton.clicked.connect(self.showMap)
+
+        layout.addWidget(self.interactionPanel, 8, 0, 2, 1)
+
+        self.statusBar().showMessage('Loaded successfully')
+        self.statusBar().setStyleSheet("""
+            QStatusBar {
+                background-color: #404040;
+                color: white;
+                border: 2px solid black;
+            }
+        """)
+        
+        self.show()
+        self.setFocus()
+        self.raise_()
+        self.activateWindow()
+
+    def load_data(self):
+        query = (
+            "SELECT "
+            "\"Name\", \"Country\", \"Station longitude [deg]\", \"Station latitude [deg]\", \"Source\" "
+            "FROM wikidata"
+        )
+        cursor = self.parent.iau_db_connection.cursor()
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        self.tableWidget.setRowCount(len(rows))
+        for row_idx, row_data in enumerate(rows):
+            for col_idx, data in enumerate(row_data):
+                item = QTableWidgetItem(str(data))
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                self.tableWidget.setItem(row_idx, col_idx, item)
+        self.tableWidget.resizeColumnsToContents()
+        self.tableWidget.setSelectionBehavior(QAbstractItemView.SelectRows)
+
+    def saveAsCsv(self):
+        # Logic for saving the data as a CSV file
+        # Open a file dialog to choose where to save the CSV file
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save CSV", "IAU_CPS_WIKIDATA_RAS_DB_OVERVIEW_CSV", "CSV Files (*.csv);;All Files (*)")
+
+        # If the user provided a file path
+        if file_path:
+            with open(file_path, mode='w', newline='', encoding='utf-8') as file:
+                writer = csv.writer(file)
+
+                # Write the header
+                headers = [self.tableWidget.horizontalHeaderItem(col).text() for col in range(self.tableWidget.columnCount())]
+                writer.writerow(headers)
+
+                # Write the table data
+                for row in range(self.tableWidget.rowCount()):
+                    row_data = []
+                    for col in range(self.tableWidget.columnCount()):
+                        item = self.tableWidget.item(row, col)
+                        row_data.append(item.text() if item else '')
+                    writer.writerow(row_data)
+
+            # Show a message indicating the file has been saved
+            self.statusBar().showMessage(f'CSV saved to {file_path}')
+
+    def saveAsWord(self):
+        # Logic for saving the data as a DOCX file
+        # Open a file dialog to choose where to save the DOCX file
+        file_path, _ = QFileDialog.getSaveFileName(self,"Save DOCX", "IAU_CPS_WIKIDATA_RAS_DB_OVERVIEW_DOCX", "Word Files (*.docx);;All Files (*)")
+
+        # If the user provided a file path
+        if file_path:
+            doc = docx.Document()
+
+            # Add a title to the document
+            doc.add_heading('IAU CPS Database Wikidata-sourced Radio Astronomy Stations', 0)
+
+            # Create a table in the document with the same number of rows and columns as the QTableWidget
+            table = doc.add_table(rows=self.tableWidget.rowCount() + 1, cols=self.tableWidget.columnCount())
+
+            # Format the table to have borders (optional)
+            table.style = 'Table Grid'
+
+            # Write the header row
+            hdr_cells = table.rows[0].cells
+            headers = [self.tableWidget.horizontalHeaderItem(col).text() for col in range(self.tableWidget.columnCount())]
+            for col_idx, header in enumerate(headers):
+                hdr_cells[col_idx].text = header
+
+            # Write the table data
+            for row_idx in range(self.tableWidget.rowCount()):
+                row_cells = table.rows[row_idx + 1].cells
+                for col_idx in range(self.tableWidget.columnCount()):
+                    item = self.tableWidget.item(row_idx, col_idx)
+                    row_cells[col_idx].text = item.text() if item else ''
+
+            # Save the document
+            doc.save(file_path)
+
+            # Show a message indicating the file has been saved
+            self.statusBar().showMessage(f'DOCX saved to {file_path}')
+    def showMap(self):
+        # Gather the data from the table to pass it to the MapWindow
+        station_data = []
+        for row in range(self.tableWidget.rowCount()):
+            name = html.escape(self.tableWidget.item(row, 0).text())  # Station name
+            country = html.escape(self.tableWidget.item(row, 1).text())  # Country
+            latitude = self.tableWidget.item(row, 3).text()  # Latitude
+            longitude = self.tableWidget.item(row, 2).text()  # Longitude
+            source = html.escape(self.tableWidget.item(row, 4).text())  # Source
+            if latitude and longitude:
+                try:
+                    station_data.append((name, source, country, float(latitude), float(longitude)))
+                except ValueError:
+                    continue  # Skip rows with invalid latitude/longitude
+
+        # Open the MapWindow and pass the station data
+        self.parent.animateClosing(self) # type: ignore
+        self.showMinimized()
+        self.setEnabled(False)
+        self.map_window = MapWindow(station_data, parent=self)
+
+    def closeEvent(self, event):
+        if self.parent:
+            self.parent.animateClosing(self)
+            self.parent.showNormal()
+            self.parent.animateOpening(self.parent, self.parent.desired_width, self.parent.desired_height)
+            self.parent.setFocus()
+            self.parent.raise_()
+            self.parent.activateWindow()
+            self.parent.setEnabled(True)
+
 
 class SiteLinkWizard(QMainWindow):
     def __init__(self, filePath=None, parent=None):
