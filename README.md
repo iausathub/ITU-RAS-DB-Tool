@@ -8,7 +8,7 @@ The environment should be created via the conda command:
 ```
 conda env create -f environment_ras_db_min.yml
 ```
-This will create RAS_DB environment which will be able to launch the DB_generator_GUI_QT.py file.
+This will create a local RAS_DB environment, which will be able to launch the DB_generator_GUI_QT.py file.
 Alternatively, a pre-built package is available, but it might not be up to date with the most recent version of the code.
 
 # Contact
