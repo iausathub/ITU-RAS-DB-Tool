@@ -11,6 +11,7 @@ v0.1b - Fixed the bug in saving whole DB as a word function (incorrect evaluatio
 v0.2a - Added a Wikidata query to the SQLite DB and Site Link Wizard to Link Wikidata stations with ITU ones
 v0.2b - Fixed bugs with incorrect js build in Link Wizard
 v.0.3 - Added possibility to review outcome DB
+v0.3a - Fixed CPS map generation labels
 
 IDE used: VSCode with enviroment set and controlled by Anaconda
 """
@@ -733,6 +734,7 @@ class MainApp(QMainWindow):
 
             # Set up the SPARQL endpoint
             sparql = SPARQLWrapper("https://query.wikidata.org/sparql")
+            sparql.addCustomHttpHeader('User-Agent', 'IAU_CPS_RAS_DB_APP/1.0 (ras.database@cps.iau.org)')
             sparql.setQuery(sparql_query)
             sparql.setReturnFormat(JSON)
 
@@ -836,8 +838,8 @@ class MainApp(QMainWindow):
             self.updateStatusLight(self.statusLight_select_iau_db, False, 'IAU Database not selected')
             self.button_connect_iau_db.setEnabled(False)
             self.button_connect_iau_db.setToolTip('Select an IAU database first.')
-            self.button_show_iau_list.setEnabled(False)
-            self.button_show_iau_list.setToolTip('Connect an IAU database first.')
+            self.button_connect_iau_db.setEnabled(False)
+            self.button_connect_iau_db.setToolTip('Connect an IAU database first.')
 
     def connect_iau_database(self):
         try:
@@ -1028,8 +1030,8 @@ class AboutDialog(QDialog):
         layout.addWidget(imageLabel, 0, 0, 2, 1)
 
         textLabel1 = QLabel("This tool helps with importing ITU database for IAU CPS RAS database.\n\n"
-                            "Program version: v0.3\n\n"
-                            "This version introduced IAU CPS RAS database viewier to make it useful to end users\n\n", self)
+                            "Program version: v0.3a\n\n"
+                            "This version introduced fix to CPS map labels\n\n", self)
         textLabel1.setWordWrap(True)
         layout.addWidget(textLabel1, 0, 1)
 
@@ -1343,10 +1345,13 @@ class SpinnerWidget(QWidget):
             painter.restore()
 
 class MapWindow(QMainWindow):
-    def __init__(self, station_data=None, parent=None):
+    def __init__(self, station_data=None, mode: str = "ITU", parent=None):
         super().__init__(parent)
         self.parent = parent
         self.station_data = station_data
+        self.mode = mode.upper()
+        if self.mode not in ("ITU", "WIKIDATA"):
+            raise ValueError("mode must be 'ITU' or 'WikiData'")
         self.initUI()
 
     def initUI(self):
@@ -1524,10 +1529,27 @@ class MapWindow(QMainWindow):
             for name, adm, ctr, lat, lon in station_data:
                 adm_escaped = adm.replace("'", "&#39;").replace('"', '&quot;')
                 ctr_escaped = ctr.replace("'", "&#39;").replace('"', '&quot;')
-                html_parts.append(f"""                                  
-                                var marker = L.marker([{lat}, {lon}], {{icon: customIcon}}).bindPopup('<b>{name}</b><br>Region country code:<b>{ctr_escaped}</b><br>Responsible administration: <b>{adm_escaped}</b>');
-                                markers.addLayer(marker);
-                                """)
+                if self.mode == "WIKIDATA":
+                    popup = (
+                        f"<b>{name}</b><br>"
+                        f"Geographical area: <b>{ctr_escaped}</b><br>"
+                        f'Wikidata source: '
+                        f'<a href="{adm_escaped}" target="_blank" '
+                        f'rel="noopener noreferrer">{adm_escaped}</a>'
+                    )
+                else:
+                    popup = (
+                        f"<b>{name}</b><br>"
+                        f"Region country code: <b>{ctr_escaped}</b><br>"
+                        f"Responsible administration: <b>{adm_escaped}</b>"
+                    )
+
+                html_parts.append(
+                    f"""var marker = L.marker([{lat}, {lon}], {{icon: customIcon}})
+                            .bindPopup('{popup}');
+                        markers.addLayer(marker);
+                    """
+                )
 
             html_parts.append("""
                     map.addLayer(markers);
@@ -2393,7 +2415,7 @@ class IAUStationListWindow_wikidata(QMainWindow):
         self.parent.animateClosing(self) # type: ignore
         self.showMinimized()
         self.setEnabled(False)
-        self.map_window = MapWindow(station_data, parent=self)
+        self.map_window = MapWindow(station_data, mode="WikiData",parent=self)
 
     def closeEvent(self, event):
         if self.parent:
@@ -2703,7 +2725,7 @@ class SiteLinkWizard(QMainWindow):
     def confirm_match(self):
         entry = self.wikidata_entries[self.current_index]
         entry_id = entry[0]
-        entry_name = entry[1]
+        entry_name = entry[1].encode('ascii', errors='ignore').decode('ascii')
         entry_country = entry[2]
         entry_lat = entry[4]
         entry_lon = entry[3]
@@ -2742,35 +2764,42 @@ class SiteLinkWizard(QMainWindow):
             QMessageBox.critical(self, "Error", 'You need to select at least one corresponding ITU station or to use "No match" button')
 
     def no_match(self):
-        entry = self.wikidata_entries[self.current_index]
-        entry_id = entry[0]
-        entry_name = entry[1]
-        entry_country = entry[2]
-        entry_lat = entry[4]
-        entry_lon = entry[3]
-        entry_source = entry[5]
+        try:
+            entry = self.wikidata_entries[self.current_index]
+            entry_id = entry[0]
+            entry_name = entry[1]
+            entry_country = entry[2]
+            entry_lat = entry[4]
+            entry_lon = entry[3]
+            entry_source = entry[5]
 
-        if entry_lat is None or entry_lon is None:
-            self.addToCSV(entry_name, entry_country, "N/A", entry_source, "No coordinates available")
-            self.cursor.execute("UPDATE wikidata SET \"Linked ITU\" = 0 WHERE \"CPS Wiki ID\" = ?", (entry_id,))
-            self.conn.commit()
-            self.next_entry()
-        else:
-            dialog = QInputDialog(self)
-            dialog.setWindowTitle('Comment request')
-            dialog.setLabelText('Reason for rejecting candidates:')
-            dialog.setInputMode(QInputDialog.TextInput)
-            dialog.resize(400, 200)
-            if dialog.exec_() == QInputDialog.Accepted:
-                comment = dialog.textValue()
-                if comment:
-                    coordinates = f"{entry_lat}, {entry_lon}"
-                    self.addToCSV(entry_name, entry_country, coordinates, entry_source, comment)
-                    self.cursor.execute("UPDATE wikidata SET \"Linked ITU\" = 0 WHERE \"CPS Wiki ID\" = ?", (entry_id,))
-                    self.conn.commit()
-                    self.next_entry()                
-                else:
-                    QMessageBox.warning(self, "Warning", "Comment is required")
+            if entry_lat is None or entry_lon is None:
+                try:
+                    self.addToCSV(entry_name, entry_country, "N/A", entry_source, "No coordinates available")
+                except Exception as e:
+                    QMessageBox.warning(self, "Error processing cast-off", f"Unexpected error at writing cast-off csv as {e}")
+                self.cursor.execute("UPDATE wikidata SET \"Linked ITU\" = 0 WHERE \"CPS Wiki ID\" = ?", (entry_id,))
+                self.conn.commit()
+                self.next_entry()
+            else:
+                dialog = QInputDialog(self)
+                dialog.setWindowTitle('Comment request')
+                dialog.setLabelText('Reason for rejecting candidates:')
+                dialog.setInputMode(QInputDialog.TextInput)
+                dialog.resize(400, 200)
+                if dialog.exec_() == QInputDialog.Accepted:
+                    comment = dialog.textValue()
+                    if comment:
+                        coordinates = f"{entry_lat}, {entry_lon}"
+                        self.addToCSV(entry_name, entry_country, coordinates, entry_source, comment)
+                        self.cursor.execute("UPDATE wikidata SET \"Linked ITU\" = 0 WHERE \"CPS Wiki ID\" = ?", (entry_id,))
+                        self.conn.commit()
+                        self.next_entry()                
+                    else:
+                        QMessageBox.warning(self, "Warning", "Comment is required")
+        except Exception as e:
+            QMessageBox.warning(self, "Error processing cast-off", f"Unexpected error as {e}")
+
         
 
 
