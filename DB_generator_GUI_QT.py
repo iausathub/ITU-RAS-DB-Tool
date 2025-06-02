@@ -12,6 +12,7 @@ v0.2a - Added a Wikidata query to the SQLite DB and Site Link Wizard to Link Wik
 v0.2b - Fixed bugs with incorrect js build in Link Wizard
 v.0.3 - Added possibility to review outcome DB
 v0.3a - Fixed CPS map generation labels
+v0.3b - Fixed incorrect map call
 
 IDE used: VSCode with enviroment set and controlled by Anaconda
 """
@@ -1030,8 +1031,8 @@ class AboutDialog(QDialog):
         layout.addWidget(imageLabel, 0, 0, 2, 1)
 
         textLabel1 = QLabel("This tool helps with importing ITU database for IAU CPS RAS database.\n\n"
-                            "Program version: v0.3a\n\n"
-                            "This version introduced fix to CPS map labels\n\n", self)
+                            "Program version: v0.3b\n\n"
+                            "This version introduced fix to map call in ITU section\n\n", self)
         textLabel1.setWordWrap(True)
         layout.addWidget(textLabel1, 0, 1)
 
@@ -1217,7 +1218,7 @@ class InteractiveDatabase(QMainWindow):
         self.parent.animateClosing(self) # type: ignore
         self.showMinimized()
         self.setEnabled(False)
-        self.mapWindow = MapWindow(station_data, self)
+        self.mapWindow = MapWindow(station_data, parent=self)
 
     def openDatabaseEntryDetails(self, row, column):
         ntc_id_item = self.tableWidget.item(row, 0)
@@ -1345,7 +1346,7 @@ class SpinnerWidget(QWidget):
             painter.restore()
 
 class MapWindow(QMainWindow):
-    def __init__(self, station_data=None, mode: str = "ITU", parent=None):
+    def __init__(self, station_data=None, mode = "ITU", parent=None):
         super().__init__(parent)
         self.parent = parent
         self.station_data = station_data
